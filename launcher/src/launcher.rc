@@ -1,0 +1,35 @@
+#include "payload_ids.h"
+IDI_APP         ICON    "launcher.ico"
+IDR_DINPUT8     RCDATA  "dinput8.dll"
+IDR_SPATCH      RCDATA  "sdvr_spatch.dll"
+IDR_NGX_DLSS    RCDATA  "nvngx_dlss.dll"
+IDR_INI         RCDATA  "sdvr.ini"
+IDR_LIC_GPL     RCDATA  "SPatch-GPL-3.0.txt"
+IDR_LIC_SPATCH  RCDATA  "SPatch-README.txt"
+IDR_LIC_NOTICES RCDATA  "NOTICES.txt"
+IDR_ART_BANNER  RCDATA  "banner.jpg"
+IDR_ART_EMBLEM  RCDATA  "emblem.png"
+1 24 "launcher.manifest"
+1 VERSIONINFO
+FILEVERSION 0,8,0,0
+PRODUCTVERSION 0,8,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "FileDescription", "Sleeping Dogs VR Launcher"
+      VALUE "ProductName", "Sleeping Dogs VR"
+      VALUE "FileVersion", "0.8.0"
+      VALUE "ProductVersion", "0.8.0"
+      VALUE "CompanyName", "Braxus"
+      VALUE "LegalCopyright", "Sleeping Dogs VR Mod by Braxus"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

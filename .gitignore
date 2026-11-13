@@ -1,0 +1,10 @@
+build/
+out/
+mod/out/
+launcher/build/
+launcher/payload_lzma/
+launcher/payload/*.dll
+launcher/payload/*.exe
+*.o
+*.res
+__pycache__/

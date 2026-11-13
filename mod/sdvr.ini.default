@@ -1,0 +1,172 @@
+; Sleeping Dogs VR (SDVR) settings - every value shown is the default. Restart the game after a change.
+[VR]
+; In game: Insert opens the VR menu (DLSS, sharpening, HUD panel, monitor window, recenter). Up / Down arrows select,
+; Left / Right arrows change, Insert closes. F8 recentres, F11 cycles the HUD panel mode, F7 the monitor window eye, F10 saves an eye capture.
+; DevTools: 1 = test keys and diagnostic hooks for development (default 0).
+DevTools=0
+; Enabled: 1 = VR mod on (default). 0 = mod off, the game runs unmodified on the monitor.
+Enabled=1
+; --- Headset image ---
+; per-eye render size (pixels)
+RenderWidth=3072
+RenderHeight=3264
+; 1 = symmetric eye frustum (needed for correct shadows)
+SymFov=1
+; 1 = head rotation drives the view
+TrackHead=1
+; 1 = head position (lean) drives the view
+Positional=1
+WorldScale=1.0
+
+; EXPERIMENTAL - first-person view (there to try what it feels like): the camera sits at Wei's head instead of behind him (also in cars / on motorcycles).
+; The right stick still turns the view. FpForward / FpUp: metres the eyes sit in front of / above the head bone.
+; FpMaxDist: when the head is further than this from the game's camera (cutscenes) the game's camera is used.
+FirstPerson=0
+FpForward=0.10
+FpUp=0.07
+FpMaxDist=15
+
+; TimerFix: 1 (default) = the game keeps Windows' 1 ms timer and full CPU speed while its window on the monitor is in the
+; background or covered (Windows 11 otherwise slows a hidden window's timers, which can cause stutter in the headset).
+TimerFix=1
+
+; AutoRecenter=1: the view is recentred automatically during the first seconds after the game starts.
+AutoRecenter=1
+
+; Gamepad shortcuts (the game still receives the buttons). Both need LB held:
+; PadRecenterHold=1: hold LB, then press and hold Y to recentre the view.
+; PadFirstPersonCombo=1: hold LB, then press and hold B to switch first person on / off.
+; PadHoldMs: how long Y or B must be held, in milliseconds.
+PadRecenterHold=1
+PadFirstPersonCombo=1
+PadHoldMs=700
+; monitor window: 0 left eye, 1 right eye, 2 alternate
+Mirror=0
+
+; --- Sharpening (contrast adaptive; works with or without DLSS) ---
+; Sharpen: strength 0 (none, default) to 1. Also in the in-game menu (Insert).
+Sharpen=0
+SharpenOn=1
+
+; MistFix: 1 (default) = the mist that appears around the player while driving is drawn in both eyes (the game leaves the
+; height map those particles need unbound for the second eye). 0 = game as is.
+MistFix=1
+
+; Sun shadows cover their full distance all round the player instead of only the flat game's view ahead (stops distant
+; shadows switching off as the head turns). ShadowRadialScale = reach of each shadow range (larger = further but softer).
+ShadowRadial=1
+ShadowRadialScale=1.5
+
+; HideScreenDrops: 1 (default) = the water drops the flat game draws "on the camera lens" (boats, rain) are left out.
+HideScreenDrops=1
+; HideHurtOverlay: 1 (default) = the red screen edges at low health are left out.
+HideHurtOverlay=1
+; HideBlur: 1 (default) = the game's depth of field / speed blur is left out (the picture stays sharp). 0 = game as is.
+HideBlur=1
+; Bloom: 1 (default) = the game's glow around bright lights. 0 = off. Also in the Insert menu.
+Bloom=1
+
+; --- DLAA / DLSS (NVIDIA RTX cards; nvngx_dlss.dll must be next to SDHDShip.exe) ---
+; Dlss: 0 off (default), 1 on, 2 on without jitter (testing), 3 input view (depth + motion, testing). Ctrl+F8 cycles in game.
+Dlss=0
+; DlssQuality: 0 DLAA (game renders at full RenderWidth x RenderHeight, best image)
+;              4 Ultra Quality (77%), 1 Quality (67%), 2 Balanced (58%), 3 Performance (50%): the game renders smaller and
+;              DLSS rebuilds the full-size image (faster). Needs Dlss=1 at start; restart after a change.
+DlssQuality=0
+; DlssPreset: the DLSS model. 11 = preset K (default), 10 = J, 12 = L, 13 = M, 16 = NVIDIA's own choice for each mode.
+DlssPreset=11
+; DlssLodBias: texture sharpness correction for the upscaling modes. auto (default) = matched to the mode
+; (Quality -0.58, Balanced -0.79, Performance -1.0, Ultra Quality -0.38); or a number from -3 to 0 (0 = none). Alt+F8 toggles in game.
+DlssLodBias=auto
+; flip the jitter direction on one axis (testing only)
+DlssJitterFlipX=0
+DlssJitterFlipY=0
+
+; --- Game camera / culling ---
+; 2 = game camera follows the head for detail checks (no low-detail NPCs at the edges)
+CullFix=2
+; 1 = radar and other heading users keep the game camera's own direction
+CullKeepWorldMatrix=1
+; SceneryFix: gives scenery that the game draws in the first eye without its own colour block a plain white block, so
+; lanterns, signs etc. are not dark there. 0 off, 1 on (default). 2 and 3 are test variants. Ctrl+F7 cycles in game.
+SceneryFix=1
+; StateFix: makes each eye re-send the game's full render state at its start, so the first eye does not draw
+; with another material's settings (dark lanterns, signs, vending machines). 0 off, 1 each eye start (default),
+; 2 each render target change, 3 every draw (slow). Ctrl+F7 cycles in game.
+StateFix=0
+; 1 = put the real camera back after each frame (can hang loading screens)
+CullRestore=0
+; culling view size relative to the headset view
+CullScale=1.25
+ShadowFix=1
+
+; --- HUD panel (health, radar, prompts) ---
+; HudMode: 0 panel fixed in front (default), 1 panel follows the head, 2 gameplay HUD hidden (menus and subtitles still show).
+HudMode=0
+; HudScale: size of the gameplay HUD (1.0 default). It grows / shrinks about the minimap (HudPivotX / HudPivotY, as fractions
+; of the panel from its top-left corner), so the minimap stays where it is.
+HudScale=1.0
+HudPivotX=0.066
+HudPivotY=0.72
+; 0 = HUD drawn into the world image (flat game behaviour)
+HudPanel=1
+; metres in front of you
+HudDistance=1.4
+; panel width in metres
+HudWidth=1.5
+; metres up (+) or down (-)
+HudHeightOffset=0
+HudAlpha=1
+; 1 = radar map and icons drawn on the HUD panel
+MinimapFix=1
+; shape of the game's 16:9 HUD area
+MinimapAspect=1.7778
+; 1 = objective markers projected onto the HUD panel from the real game camera
+MarkerFix=1
+; 1 = glow effects (full meters, highlights) add light to the HUD without making their square sprite opaque
+HudGlowFix=1
+; pause map: 1 = map drawn in the game's 16:9 screen area, 0 = stretched over the whole panel (F1 toggles)
+MenuMapFit=1
+; menus: 1 = show only the game's 16:9 screen area of the panel (hides map names that are off the map)
+MenuCrop=1
+; size of the panel in menus (pause map, pause menu) relative to the gameplay HUD
+MenuHudScale=1.3
+
+; --- Cutscenes ---
+; 1 = cutscene animation advances every frame (F2 toggles)
+CutsceneSmooth=1
+; HUD panel size during cutscenes (bigger subtitles); 1.0 = off, 1.4 = one step larger
+CutsceneHudScale=1.25
+; where the subtitle line is (fraction of panel width below centre) - the panel grows around it
+CutsceneSubtitleY=0.22
+
+; --- Menus and logo screens ---
+; 1 = menus / pause / start screen shown on a fixed screen in front of you
+MenuScreen=1
+; size of that screen in degrees
+MenuScreenFov=80
+; metres
+MenuScreenDistance=3.0
+
+[SPatch]
+; SPatch by xowny (GPLv3, https://www.nexusmods.com/sleepingdogsdefinitiveedition/mods/148) is built into this mod
+; with the author's permission. Each key switches a whole group; inside a group SPatch.ini decides each feature.
+; Enabled: 0 turns all of SPatch off.
+Enabled=1
+; Stability: crash and file-safety fixes.
+Stability=1
+; Timing: crowd density and camera/vehicle history at high frame rates, hidden 120 FPS wait removed.
+Timing=0
+; Content: restored eye detail, wetness and sweat on characters.
+Content=0
+; Features: raw mouse, camera smoothing off, GTA IV style vehicle cameras, stick deadzones.
+Features=0
+; Graphics: original fog and neon glow, larger reflections, texture filtering, shadow filter.
+Graphics=0
+; Log: 1 writes SPatch.log next to the game.
+Log=1
+; VoiceLines / CombatListFix: test switches for single SPatch features (1 = on, default).
+VoiceLines=1
+CombatListFix=1
+; Sweat: SPatch's sweat effect is not part of the VR mod (0, default). 1 = on, for testing only.
+Sweat=0
