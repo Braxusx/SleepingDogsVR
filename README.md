@@ -49,9 +49,15 @@ While driving, Y gets you out of the vehicle and B is the brake. F8 and the Inse
 - `mod/src/spatch/` is the complete source of `sdvr_spatch.dll` (SPatch with this mod's changes).
 
 ### Licence
-- `mod/src/spatch/` (everything that goes into `sdvr_spatch.dll`) is SPatch by xowny with this mod's changes and is licensed
-  under the GNU General Public License v3 - see `mod/src/spatch/LICENSE-GPL-3.0.txt`.
-- The rest of the mod and the launcher: (C) Braxus. Third-party parts are listed in `THIRD_PARTY_NOTICES.md`.
+Sleeping Dogs VR is free software under the **GNU General Public License v3** (see `LICENSE`).
+
+- The author's own code (the VR mod outside `mod/src/spatch/`, and the launcher) comes with an additional permission to
+  link it with NVIDIA's DLSS SDK - see `LICENSE-NVIDIA-EXCEPTION.md`.
+- `mod/src/spatch/` is SPatch by xowny with this mod's changes: GPL v3, no additional permission. It is built as its own
+  library, `sdvr_spatch.dll`.
+- NVIDIA's `nvngx_dlss.dll` is proprietary NVIDIA software and is **not** covered by the GPL. It is not in this
+  repository; the released launcher carries it under the NVIDIA RTX SDKs License, with a copy of that licence.
+- Third-party parts keep their own licences: `THIRD_PARTY_NOTICES.md`.
 
 ### Credits
 - Sleeping Dogs VR by Braxus.
@@ -59,7 +65,7 @@ While driving, Y gets you out of the vehicle and B is the brake. F8 and the Inse
   `sdvr_spatch.dll` with the author's permission. Thank you, xowny.
   [Nexus Mods](https://www.nexusmods.com/sleepingdogsdefinitiveedition/mods/148) - [GitHub](https://github.com/xowny/SPatch)
   SPatch is licensed under the GNU GPL v3; `sdvr_spatch.dll` is distributed under the same licence and its complete source,
-  with this mod's changes, is attached to every release (`sdvr_spatch-source.zip`).
+  with this mod's changes, is in this repository (`mod/src/spatch`).
 - NVIDIA DLSS (C) NVIDIA Corporation. MinHook by Tsuda Kageyu. OpenXR by the Khronos Group. Dear ImGui by Omar Cornut.
 - Launcher built on the Far Cry 2 VR launcher, whose design follows Pizza Parker's Dishonored VR launcher (with permission).
 

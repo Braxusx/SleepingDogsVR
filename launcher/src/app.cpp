@@ -589,14 +589,14 @@ static void PageAboutDraw() {
     theme::EndCard();
     theme::SectionTitle("CREDITS");
     theme::BeginCard("credits");
-    theme::Bullet("Sleeping Dogs VR by Braxus.");
+    theme::Bullet("Sleeping Dogs VR by Braxus. Free software under the GNU GPL v3; source at github.com/Braxusx/SleepingDogsVR.");
     theme::Bullet("SPatch by xowny (GNU GPL v3), built into the mod as sdvr_spatch.dll with the author's permission. Thank you, xowny.");
     if (theme::Button("SPatch on Nexus Mods")) ShellExecuteW(nullptr, L"open", L"https://www.nexusmods.com/sleepingdogsdefinitiveedition/mods/148", nullptr, nullptr, SW_SHOWNORMAL);
     ImGui::SameLine(); if (theme::Button("SPatch on GitHub")) ShellExecuteW(nullptr, L"open", L"https://github.com/xowny/SPatch", nullptr, nullptr, SW_SHOWNORMAL);
     if (g_app.game.valid && g_app.state.installed) { ImGui::SameLine(); if (theme::Button("Licences and notices")) ShellExecuteW(nullptr, L"open", (g_app.game.root + L"\\sdvr_licenses").c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
     Gap();
-    theme::Bullet("sdvr_spatch.dll is free software under the GPL v3; its source code, with the VR mod's changes, is published with every release of the mod. The licence text is installed in the game's sdvr_licenses folder.");
-    theme::Bullet("NVIDIA DLSS \xc2\xa9 NVIDIA Corporation (NVIDIA RTX SDKs licence). MinHook by Tsuda Kageyu (BSD). OpenXR by the Khronos Group (Apache 2.0).");
+    theme::Bullet("sdvr_spatch.dll is free software under the GPL v3; its source code, with the VR mod's changes, is in the mod's GitHub repository. The licence text is installed in the game's sdvr_licenses folder.");
+    theme::Bullet("NVIDIA DLSS \xc2\xa9 NVIDIA Corporation: proprietary, not part of the mod's open-source licence; shipped under the NVIDIA RTX SDKs licence (copy in sdvr_licenses). MinHook by Tsuda Kageyu (BSD). OpenXR by the Khronos Group (Apache 2.0).");
     theme::Bullet("Launcher: built on the Far Cry 2 VR launcher, whose design follows Pizza Parker's Dishonored VR launcher (with permission). Dear ImGui by Omar Cornut (MIT), LZMA SDK by Igor Pavlov, miniz by Rich Geldreich (MIT).");
     Gap();
     theme::Wrapped("Sleeping Dogs is a trademark of Square Enix. This is an unofficial fan mod, not affiliated with or endorsed by Square Enix or United Front Games. The Sleeping Dogs name and logo belong to Square Enix.", IM_COL32(104, 110, 128, 255));

@@ -12,7 +12,7 @@ off; it is controlled from the [SPatch] section of sdvr.ini).
   Source:     https://github.com/xowny/SPatch
 SPatch is licensed under the GNU General Public License version 3 (see SPatch-GPL-3.0.txt). sdvr_spatch.dll is
 distributed under the same licence; the complete source code of sdvr_spatch.dll, including the VR mod's changes, is
-published with every release of Sleeping Dogs VR on the page this launcher was downloaded from. SPatch's own
+published at https://github.com/Braxusx/SleepingDogsVR (folder mod/src/spatch). SPatch's own
 description is in SPatch-README.txt. SPatch comes with no warranty.
 
 SPatch includes SMAA (Enhanced Subpixel Morphological Antialiasing):
@@ -43,8 +43,16 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 NVIDIA DLSS (nvngx_dlss.dll)
 ----------------------------
-(C) NVIDIA Corporation. All rights reserved. NVIDIA DLSS is provided under the NVIDIA RTX SDKs licence
-(https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt). NVIDIA and DLSS are trademarks of NVIDIA Corporation.
+(C) NVIDIA Corporation. All rights reserved. nvngx_dlss.dll is proprietary software of NVIDIA Corporation. It is NOT
+covered by the GNU General Public License or any other open-source licence of this mod; it is redistributed with the
+mod under the NVIDIA RTX SDKs License Agreement, a copy of which is in NVIDIA-RTX-SDKs-License.txt in this folder.
+This product uses NVIDIA DLSS technology, which needs a compatible NVIDIA RTX graphics card. NVIDIA and DLSS are
+trademarks and/or registered trademarks of NVIDIA Corporation in the U.S. and other countries.
+
+Sleeping Dogs VR (dinput8.dll and the launcher)
+-----------------------------------------------
+(C) Braxus. Licensed under the GNU General Public License version 3 (the text is in SPatch-GPL-3.0.txt), with an
+additional permission to link it with NVIDIA's DLSS (NGX) SDK. Source: https://github.com/Braxusx/SleepingDogsVR
 
 MinHook
 -------

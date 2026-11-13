@@ -8,6 +8,7 @@
 #define IDR_LIC_GPL     106
 #define IDR_LIC_SPATCH  107
 #define IDR_LIC_NOTICES 108
+#define IDR_LIC_NVIDIA  109
 #define IDR_ART_BANNER  201
 #define IDR_ART_EMBLEM  202
 #define IDI_APP         1

@@ -9,7 +9,7 @@
 | Dear ImGui (Omar Cornut) | `launcher/third_party/imgui` | MIT (see `LICENSE.txt` there) |
 | LZMA SDK decoder (Igor Pavlov) | `launcher/src/lzma` | Public domain |
 | miniz (Rich Geldreich and others) | `launcher/src/miniz` | MIT (see `LICENSE` there) |
-| NVIDIA DLSS (NGX) runtime `nvngx_dlss.dll` | shipped in the launcher only, not in this repository | NVIDIA RTX SDKs license (redistributable with the application) |
+| NVIDIA DLSS (NGX) runtime `nvngx_dlss.dll` | shipped in the launcher only, not in this repository | Proprietary - NVIDIA RTX SDKs License (copy: `launcher/payload/NVIDIA-RTX-SDKs-License.txt`); not covered by the GPL |
 
 SPatch is used with its author's permission. Nexus Mods page: https://www.nexusmods.com/sleepingdogsdefinitiveedition/mods/148
 

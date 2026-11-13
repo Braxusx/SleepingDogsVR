@@ -335,7 +335,7 @@ Runtime ActiveRuntime() {
 struct PayloadFile { int id; const wchar_t* rel; };
 static const PayloadFile kFiles[] = {
     { IDR_DINPUT8, L"dinput8.dll" }, { IDR_SPATCH, L"sdvr_spatch.dll" }, { IDR_NGX_DLSS, L"nvngx_dlss.dll" },
-    { IDR_LIC_GPL, L"sdvr_licenses\\SPatch-GPL-3.0.txt" }, { IDR_LIC_SPATCH, L"sdvr_licenses\\SPatch-README.txt" }, { IDR_LIC_NOTICES, L"sdvr_licenses\\NOTICES.txt" },
+    { IDR_LIC_GPL, L"sdvr_licenses\\SPatch-GPL-3.0.txt" }, { IDR_LIC_SPATCH, L"sdvr_licenses\\SPatch-README.txt" }, { IDR_LIC_NOTICES, L"sdvr_licenses\\NOTICES.txt" }, { IDR_LIC_NVIDIA, L"sdvr_licenses\\NVIDIA-RTX-SDKs-License.txt" },
 };
 static void Add(Report& r, char kind, const std::string& text) { r.lines.push_back(std::string(1, kind) + " " + text); Log("%c %s", kind, text.c_str()); if (kind == 'x') r.ok = false; }
 static std::string ErrText(DWORD e) {
