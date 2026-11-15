@@ -1070,17 +1070,80 @@ static bool g_hudPanelIni = true;   // HudPanel=0 in sdvr.ini: the game draws it
 static void HudModeSet(int st) { g_hudSt = st; XrSetHudHidden(st == 2); if (g_hudPanelIni) g_hudMode = 1; XrSetHudLock(st == 0); }   // 093: off = panel hidden, not the flat HUD
 static void IniInt(const wchar_t* k, int v) { wchar_t b[16]; swprintf(b, 16, L"%d", v); WritePrivateProfileStringW(L"VR", k, b, g_ini); }
 static void IniFloat(const wchar_t* k, float v) { wchar_t b[16]; swprintf(b, 16, L"%.2f", v); WritePrivateProfileStringW(L"VR", k, b, g_ini); }
+// build 141: the gamepad shortcuts are set by the player in the menu (page GAMEPAD SHORTCUTS). Each shortcut is one or two
+// buttons that must be held together for PadHoldMs. Buttons are XInput bits; the triggers count as buttons (LT 0x400, RT 0x800).
+static int g_padCombo = 1, g_padRecenter = 1, g_padHoldMs = 700;
+static WORD g_padBtn[4] = { 0x0100, 0x2000, 0x0100, 0x8000 };   // first person 1, 2 (LB, B); recentre 1, 2 (LB, Y)
+static volatile WORD g_padNow; static volatile bool g_padHave; static ULONGLONG g_padQuietUntil;   // buttons down now; no shortcut while a button is being chosen
+static const struct { const char* n; WORD m; } kPadName[16] = { { "DPAD UP", 1 }, { "DPAD DOWN", 2 }, { "DPAD LEFT", 4 }, { "DPAD RIGHT", 8 }, { "START", 0x10 }, { "BACK", 0x20 },
+    { "LEFT STICK CLICK", 0x40 }, { "RIGHT STICK CLICK", 0x80 }, { "LB", 0x100 }, { "RB", 0x200 }, { "LT", 0x400 }, { "RT", 0x800 }, { "A", 0x1000 }, { "B", 0x2000 }, { "X", 0x4000 }, { "Y", 0x8000 } };
+static const char* PadName(WORD m) { for (auto& e : kPadName) if (e.m == m) return e.n; return "NONE"; }
+static void PadSave() {
+    static const wchar_t* k[4] = { L"PadFirstPersonButton1", L"PadFirstPersonButton2", L"PadRecenterButton1", L"PadRecenterButton2" };
+    for (int i = 0; i < 4; i++) { wchar_t b[32]; swprintf(b, 32, L"%hs", PadName(g_padBtn[i])); WritePrivateProfileStringW(L"VR", k[i], b, g_ini); }
+}
+static void PadLoad() {
+    static const wchar_t* k[4] = { L"PadFirstPersonButton1", L"PadFirstPersonButton2", L"PadRecenterButton1", L"PadRecenterButton2" };
+    for (int i = 0; i < 4; i++) { wchar_t w[32]; char a[32];
+        GetPrivateProfileStringW(L"VR", k[i], L"", w, 32, g_ini); if (!w[0]) continue;   // key absent: keep the default
+        snprintf(a, sizeof a, "%ls", w); for (char* c = a; *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32;
+        WORD m = 0; for (auto& e : kPadName) if (!strcmp(a, e.n)) m = e.m;
+        g_padBtn[i] = m; }   // an unknown name or NONE = no button
+}
 static void MenuTick() {
-    enum { I_DLSS, I_QUAL, I_SHARP, I_BLOOM, I_HUD, I_HUDDIST, I_HUDSIZE, I_WORLD, I_FP, I_MIRROR, I_RECENTER, I_COUNT };
+    enum { I_DLSS, I_QUAL, I_SHARP, I_BLOOM, I_HUD, I_HUDDIST, I_HUDSIZE, I_WORLD, I_FP, I_MIRROR, I_PAD, I_RECENTER, I_COUNT };
+    enum { P_FP1, P_FP2, P_RC1, P_RC2, P_HOLD, P_BACK, P_COUNT };   // 141: page 2, gamepad shortcuts
+    static int page = 0, psel = 0, capt = -1; static ULONGLONG captUntil = 0; static WORD captPrev = 0;
     static bool open = false, pIns = false, pUp = false, pDn = false, pInc = false, pDec = false; static int sel = 0; static ULONGLONG nextRep = 0, nextDraw = 0;
     static int qualWant = -1; static const int kQOrder[5] = { 0, 4, 1, 2, 3 };   // DLAA, Ultra Quality, Quality, Balanced, Performance
     static const char* kQ[5] = { "DLAA (FULL SIZE)", "QUALITY", "BALANCED", "PERFORMANCE", "ULTRA QUALITY" };
     if (qualWant < 0) qualWant = GetPrivateProfileIntW(L"VR", L"DlssQuality", 0, g_ini), qualWant = (qualWant < 0 || qualWant > 4) ? 0 : qualWant;
     ULONGLONG now = GetTickCount64(); bool draw = false;
     bool ins = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-    if (ins && !pIns) { open = !open; draw = true; InputBlockSet(open); if (!open) { OsdRequest("VR MENU CLOSED", 1); InputBlockReport(); } }
+    if (ins && !pIns) { open = !open; draw = true; InputBlockSet(open); capt = -1; if (!open) { page = 0; OsdRequest("VR MENU CLOSED", 1); InputBlockReport(); } }
     pIns = ins;
     if (!open) return;
+    if (page == 1) {   // ---- gamepad shortcuts page
+        bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0, dn = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+        bool inc = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0, dec = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+        const WORD nowB = g_padNow;
+        if (capt >= 0) {   // waiting for the player to press the button he wants
+            g_padQuietUntil = now + 1500;
+            const WORD fresh = (WORD)(nowB & ~captPrev); captPrev = nowB;
+            if (fresh) { WORD m = 1; while (!(fresh & m)) m <<= 1;
+                g_padBtn[capt] = m; if (g_padBtn[capt ^ 1] == m) g_padBtn[capt ^ 1] = 0;   // the same button twice in one shortcut makes no sense
+                PadSave(); Log("menu: gamepad button %d = %s", capt, PadName(m)); capt = -1; draw = true; }
+            else if (now >= captUntil || (dec && !pDec)) { capt = -1; draw = true; }   // nothing pressed in 10 s, or Left = cancel
+        } else {
+            if (up && !pUp) { psel = (psel + P_COUNT - 1) % P_COUNT; draw = true; }
+            if (dn && !pDn) { psel = (psel + 1) % P_COUNT; draw = true; }
+            if (inc && !pInc) { draw = true;
+                if (psel <= P_RC2) { capt = psel; captPrev = nowB; captUntil = now + 10000; }
+                else if (psel == P_HOLD) { g_padHoldMs = g_padHoldMs >= 2000 ? 2000 : g_padHoldMs + 100; IniInt(L"PadHoldMs", g_padHoldMs); }
+                else { page = 0; nextRep = now + 600; } }
+            if (dec && !pDec) { draw = true;
+                if (psel <= P_RC2) { g_padBtn[psel] = 0; PadSave(); Log("menu: gamepad button %d cleared", psel); }
+                else if (psel == P_HOLD) { g_padHoldMs = g_padHoldMs <= 200 ? 200 : g_padHoldMs - 100; IniInt(L"PadHoldMs", g_padHoldMs); }
+                else { page = 0; nextRep = now + 600; } }
+        }
+        pUp = up; pDn = dn; pInc = inc; pDec = dec;
+        if (page == 1) {
+            if (!draw && now < nextDraw) return;
+            nextDraw = now + (capt >= 0 ? 250 : 1000);
+            static const char* pn[P_COUNT] = { "FIRST PERSON  BUTTON 1", "FIRST PERSON  BUTTON 2", "RECENTER      BUTTON 1", "RECENTER      BUTTON 2", "HOLD TIME", "BACK" };
+            char t[900]; int o = snprintf(t, sizeof t, "GAMEPAD SHORTCUTS\n \n");
+            for (int i = 0; i < P_COUNT; i++) { char v[48];
+                if (i <= P_RC2) { if (capt == i) snprintf(v, 48, "PRESS A GAMEPAD BUTTON (%d)", (int)((captUntil - now + 999) / 1000)); else snprintf(v, 48, "%s", PadName(g_padBtn[i])); }
+                else if (i == P_HOLD) snprintf(v, 48, "%.1f S", (float)g_padHoldMs / 1000.f); else snprintf(v, 48, "PRESS RIGHT");
+                o += snprintf(t + o, sizeof t - o, "%s %-24s %s\n", i == psel ? ">" : " ", pn[i], v); }
+            const WORD fpM = (WORD)(g_padBtn[0] | g_padBtn[1]), rcM = (WORD)(g_padBtn[2] | g_padBtn[3]);
+            snprintf(t + o, sizeof t - o, " \nHOLD BOTH BUTTONS OF A SHORTCUT TOGETHER TO USE IT\n%s%sRIGHT: CHOOSE A BUTTON     LEFT: NO BUTTON\nUP / DOWN: SELECT     INSERT: CLOSE",
+                     !g_padHave ? "NO XINPUT GAMEPAD FOUND\n" : "", (fpM && fpM == rcM) ? "BOTH SHORTCUTS USE THE SAME BUTTONS - CHANGE ONE\n" : "");
+            OsdRequest(t, 3);
+            return;
+        }
+        draw = true;   // back on the main page
+    }
     bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0, dn = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;   // 090: arrow keys
     bool inc = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0, dec = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
     if (up && !pUp) { sel = (sel + I_COUNT - 1) % I_COUNT; draw = true; }
@@ -1102,6 +1165,7 @@ static void MenuTick() {
         case I_WORLD: { float w = 1.f / (g_worldScale > 0.01f ? g_worldScale : 1.f); w = floorf(w * 20.f + 0.5f) / 20.f + 0.05f * (float)d; if (w < 0.5f) w = 0.5f; if (w > 2.f) w = 2.f; g_worldScale = 1.f / w; wchar_t b[24]; swprintf(b, 24, L"%.4f", g_worldScale); WritePrivateProfileStringW(L"VR", L"WorldScale", b, g_ini); Log("menu: world scale %.2f (eye / movement factor %.3f)", w, g_worldScale); } break;   // 124: world size as seen: 1 / the eye-separation factor
         case I_FP: g_fp = !g_fp; IniInt(L"FirstPerson", g_fp); Log("menu: first person %d", (int)g_fp); break;
         case I_MIRROR: g_mirror = (g_mirror + d + 3) % 3; IniInt(L"Mirror", g_mirror); break;
+        case I_PAD: if (d > 0) { page = 1; psel = 0; capt = -1; pInc = true; nextDraw = 0; return; } break;
         case I_RECENTER: g_recenterReq = true; break;
         }
     }
@@ -1117,10 +1181,10 @@ static void MenuTick() {
     snprintf(v[I_HUDDIST], 48, "%.1f M", hd); snprintf(v[I_HUDSIZE], 48, "%.2f", XrHudScaleGet());
     snprintf(v[I_WORLD], 48, "%.2f", 1.f / (g_worldScale > 0.01f ? g_worldScale : 1.f)); snprintf(v[I_FP], 48, "%s", g_fp ? "ON (EXPERIMENTAL)" : "OFF");
     static const char* ms[3] = { "LEFT EYE", "RIGHT EYE", "ALTERNATING" }; snprintf(v[I_MIRROR], 48, "%s", ms[g_mirror % 3]);
-    snprintf(v[I_RECENTER], 48, "PRESS RIGHT");
-    static const char* nm[I_COUNT] = { "DLSS", "DLSS MODE", "SHARPENING", "BLOOM", "HUD PANEL", "HUD DISTANCE", "HUD SCALE", "WORLD SCALE", "FIRST PERSON", "MONITOR WINDOW", "RECENTER VIEW" };
-    char t[800]; int o = snprintf(t, sizeof t, "SLEEPING DOGS VR MENU\n \n");
-    for (int i = 0; i < I_COUNT; i++) o += snprintf(t + o, sizeof t - o, "%s %-15s %s\n", i == sel ? ">" : " ", nm[i], v[i]);
+    snprintf(v[I_RECENTER], 48, "PRESS RIGHT"); snprintf(v[I_PAD], 48, "PRESS RIGHT");
+    static const char* nm[I_COUNT] = { "DLSS", "DLSS MODE", "SHARPENING", "BLOOM", "HUD PANEL", "HUD DISTANCE", "HUD SCALE", "WORLD SCALE", "FIRST PERSON", "MONITOR WINDOW", "GAMEPAD SHORTCUTS", "RECENTER VIEW" };
+    char t[1000]; int o = snprintf(t, sizeof t, "SLEEPING DOGS VR MENU\n \n");
+    for (int i = 0; i < I_COUNT; i++) o += snprintf(t + o, sizeof t - o, "%s %-18s %s\n", i == sel ? ">" : " ", nm[i], v[i]);
     snprintf(t + o, sizeof t - o, " \nUP / DOWN: SELECT     LEFT / RIGHT: CHANGE\nINSERT: CLOSE");
     OsdRequest(t, 3);
 }
@@ -1128,7 +1192,6 @@ static void MenuTick() {
 // Both need LB held, so neither can happen from a single button used in play (the right stick click is the car horn):
 //   LB held + Y pressed and held for PadHoldMs (700)  -> recentre the view
 //   LB held + B pressed and held for PadHoldMs        -> first person on / off
-static int g_padCombo = 1, g_padRecenter = 1, g_padHoldMs = 700;
 static void PadTick() {
     struct XState { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; };
     typedef DWORD (WINAPI *Get_t)(DWORD, XState*);
@@ -1139,17 +1202,21 @@ static void PadTick() {
         for (int i = 0; i < 3 && !get; i++) { HMODULE h = LoadLibraryW(kDll[i]); if (h && (get = (Get_t)GetProcAddress(h, "XInputGetState"))) Log("gamepad shortcuts: loaded %ls", kDll[i]); }
         if (!get) Log("gamepad shortcuts: XInput not found - off");
     }
-    if (!get || (!g_padCombo && !g_padRecenter)) return;
-    WORD b = 0; for (DWORD i = 0; i < 4; i++) { XState st = {}; if (get(i, &st) == 0) b |= st.buttons; }
+    if (!get) return;
+    WORD b = 0; bool have = false;
+    for (DWORD i = 0; i < 4; i++) { XState st = {}; if (get(i, &st) == 0) { have = true; b |= (WORD)(st.buttons & 0xF3FF); if (st.lt > 128) b |= 0x0400; if (st.rt > 128) b |= 0x0800; } }
+    g_padNow = b; g_padHave = have;
     ULONGLONG now = GetTickCount64();
-    static ULONGLONG ySince = 0, bSince = 0; static bool yDone = false, bDone = false;
-    const bool lb = (b & 0x0100) != 0, y = lb && (b & 0x8000), bb = lb && (b & 0x2000);
-    if (!y) { ySince = 0; yDone = false; }
-    else { if (!ySince) ySince = now;
-        if (g_padRecenter && !yDone && !bb && now - ySince >= (ULONGLONG)g_padHoldMs) { yDone = true; g_recenterReq = true; Log("recenter requested (LB + Y held)"); OsdRequest("RECENTERED", 2); } }
-    if (!bb) { bSince = 0; bDone = false; }
-    else { if (!bSince) bSince = now;
-        if (g_padCombo && !bDone && !y && now - bSince >= (ULONGLONG)g_padHoldMs) { bDone = true; g_fp = !g_fp; IniInt(L"FirstPerson", g_fp); Log("first person %d (LB + B held)", (int)g_fp); OsdRequest(g_fp ? "FIRST PERSON: ON" : "FIRST PERSON: OFF", 2); } }
+    const WORD fpM = (WORD)(g_padBtn[0] | g_padBtn[1]), rcM = (WORD)(g_padBtn[2] | g_padBtn[3]);
+    const bool quiet = now < g_padQuietUntil;
+    const bool fp = g_padCombo && fpM && !quiet && (b & fpM) == fpM, rc = g_padRecenter && rcM && !quiet && (b & rcM) == rcM;
+    static ULONGLONG rcSince = 0, fpSince = 0; static bool rcDone = false, fpDone = false;
+    if (!rc) { rcSince = 0; rcDone = false; }
+    else { if (!rcSince) rcSince = now;
+        if (!rcDone && !fp && now - rcSince >= (ULONGLONG)g_padHoldMs) { rcDone = true; g_recenterReq = true; Log("recenter requested (gamepad shortcut)"); OsdRequest("RECENTERED", 2); } }
+    if (!fp) { fpSince = 0; fpDone = false; }
+    else { if (!fpSince) fpSince = now;
+        if (!fpDone && !rc && now - fpSince >= (ULONGLONG)g_padHoldMs) { fpDone = true; g_fp = !g_fp; IniInt(L"FirstPerson", g_fp); Log("first person %d (gamepad shortcut)", (int)g_fp); OsdRequest(g_fp ? "FIRST PERSON ON" : "FIRST PERSON OFF", 2); } }
 }
 static DWORD WINAPI KeyThread(LPVOID) {
     InputBlockOwnThread(GetCurrentThreadId());
@@ -1246,7 +1313,7 @@ static void Init() {
     g_fp = GetPrivateProfileIntW(L"VR", L"FirstPerson", 0, g_ini) != 0;
     g_autoRecenter = GetPrivateProfileIntW(L"VR", L"AutoRecenter", 1, g_ini);
     g_padCombo = GetPrivateProfileIntW(L"VR", L"PadFirstPersonCombo", 1, g_ini); g_padRecenter = GetPrivateProfileIntW(L"VR", L"PadRecenterHold", 1, g_ini);
-    g_padHoldMs = GetPrivateProfileIntW(L"VR", L"PadHoldMs", 700, g_ini); if (g_padHoldMs < 100) g_padHoldMs = 100;
+    g_padHoldMs = GetPrivateProfileIntW(L"VR", L"PadHoldMs", 700, g_ini); if (g_padHoldMs < 100) g_padHoldMs = 100; PadLoad();
     { wchar_t b[32]; GetPrivateProfileStringW(L"VR", L"FpForward", L"0.10", b, 32, g_ini); g_fpFwd = (float)_wtof(b); GetPrivateProfileStringW(L"VR", L"FpUp", L"0.07", b, 32, g_ini); g_fpUp = (float)_wtof(b); GetPrivateProfileStringW(L"VR", L"FpMaxDist", L"15", b, 32, g_ini); g_fpMaxDist = (float)_wtof(b); }
     g_shadowFix = GetPrivateProfileIntW(L"VR", L"ShadowFix", 1, g_ini);
     g_cullFix = GetPrivateProfileIntW(L"VR", L"CullFix", 2, g_ini);

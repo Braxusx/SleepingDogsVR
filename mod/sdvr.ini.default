@@ -33,12 +33,16 @@ TimerFix=1
 ; AutoRecenter=1: the view is recentred automatically during the first seconds after the game starts.
 AutoRecenter=1
 
-; Gamepad shortcuts (the game still receives the buttons). Both need LB held:
-; PadRecenterHold=1: hold LB, then press and hold Y to recentre the view.
-; PadFirstPersonCombo=1: hold LB, then press and hold B to switch first person on / off.
-; PadHoldMs: how long Y or B must be held, in milliseconds.
+; Gamepad shortcuts (XInput pads). Each is one or two buttons held together for PadHoldMs milliseconds.
+; They are easiest to set in game: Insert > GAMEPAD SHORTCUTS, choose a line, press Right, then press the button you want.
+; Button names: A B X Y LB RB LT RT START BACK, DPAD UP / DOWN / LEFT / RIGHT, LEFT STICK CLICK, RIGHT STICK CLICK, NONE.
+; The game still receives the buttons. PadRecenterHold / PadFirstPersonCombo = 0 switches a shortcut off.
 PadRecenterHold=1
+PadRecenterButton1=LB
+PadRecenterButton2=Y
 PadFirstPersonCombo=1
+PadFirstPersonButton1=LB
+PadFirstPersonButton2=B
 PadHoldMs=700
 ; monitor window: 0 left eye, 1 right eye, 2 alternate
 Mirror=0
