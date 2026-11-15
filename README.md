@@ -30,15 +30,16 @@ Uninstall from the same launcher; your save games are not touched.
 ### Controls
 | | |
 |---|---|
-| Hold LB + hold Y | Recentre the view |
-| Hold LB + hold B | First person on / off |
+| Hold LB + hold Y (default; change it in the VR menu) | Recentre the view |
+| Hold LB + hold B (default; change it in the VR menu) | First person on / off |
 | Insert | VR menu (arrow keys select and change) |
 | F8 | Recentre |
 | F11 | HUD panel mode |
 | F7 | Monitor window eye |
 
-Use the two gamepad shortcuts on foot only - before getting into a vehicle or onto a motorcycle, or after getting out.
-While driving, Y gets you out of the vehicle and B is the brake. F8 and the Insert menu work at any time.
+The gamepad shortcuts are yours to choose: Insert > Gamepad shortcuts, pick a button line, press Right, then press the
+button you want. The game still receives those buttons - with the defaults, Y gets you out of a vehicle and B is the brake,
+so use them on foot or pick other buttons. F8 and the Insert menu work at any time.
 
 ### Building from source
 - `mod/` - the VR mod. `mod/build.sh <number>` builds `dinput8.dll` and `sdvr_spatch.dll` with llvm-mingw (x86_64). The DLSS part

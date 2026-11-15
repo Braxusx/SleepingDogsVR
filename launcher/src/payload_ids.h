@@ -1,6 +1,6 @@
 // payload_ids.h - resource ids of the files the launcher installs and its art
 #pragma once
-#define SDVR_VERSION "0.8.0"
+#define SDVR_VERSION "0.8.4"
 #define IDR_DINPUT8     101
 #define IDR_SPATCH      102
 #define IDR_NGX_DLSS    104

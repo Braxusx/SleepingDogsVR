@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.4
+
+- **Gamepad shortcuts are yours to choose.** In the VR menu (Insert) the new page *Gamepad shortcuts* lists two buttons each
+  for first person on / off and for recentre. Choose a line, press Right, then press the button you want on the gamepad.
+  Triggers and stick clicks can be used; a shortcut can also be a single button. The hold time is adjustable. Defaults are
+  unchanged (LB + B, LB + Y). New `sdvr.ini` keys: `PadFirstPersonButton1/2`, `PadRecenterButton1/2`.
+- **See-through VR menu.** The menu and messages in the headset are drawn semi-transparent.
+- **Launcher:** Settings now has a guide to the in-game VR menu (how to use it and what each line does) in place of the
+  gamepad shortcut switches.
+- Mod build 141.
+
 ## 0.8.0 - 2026-11-13
 
 First public release. A virtual reality mod for **Sleeping Dogs: Definitive Edition** (Steam or GOG).

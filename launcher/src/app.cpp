@@ -489,21 +489,46 @@ static void PageSettingsDraw() {
     ComboRow("Monitor window shows", "Which eye the game's window on your monitor shows. F7 changes this in game.", L"Mirror", L"0", kMirror, 3, Installed());
     theme::EndCard();
 
-    theme::SectionTitle("GAMEPAD SHORTCUTS");
-    theme::BeginCard("pad");
-    {   // large notice: the game uses every button, so the two shortcuts are for on foot only
+    theme::SectionTitle("IN-GAME VR MENU");
+    theme::BeginCard("vrmenu");
+    {
         theme::Dot(theme::Warn());
         ImGui::PushFont(theme::g_fonts.capsLg);
-        theme::Wrapped("Use these shortcuts on foot only: before getting into a vehicle or onto a motorcycle, or after getting out.", theme::Warn());
+        theme::Wrapped("Press Insert on the keyboard while playing to open the VR menu in the headset.", theme::Warn());
         ImGui::PopFont();
-        theme::Wrapped("While driving or riding, Y gets you out of the vehicle and B is the brake, so the shortcuts would do that as well. F8 on the keyboard and the in-game VR menu (Insert) work at any time.", theme::Muted());
+        theme::Wrapped("Everything in it applies at once and is saved, so you rarely need to come back to this launcher. While the menu is open the arrow keys only steer the menu; the game does not see them.", theme::Muted());
         ImGui::Dummy(ImVec2(1, 6 * g_s));
     }
-    ToggleKey("Hold LB + Y: recentre the view", "Hold LB, then press and hold Y for a moment.", L"PadRecenterHold", L"1");
-    Gap();
-    ToggleKey("Hold LB + B: first person on / off", "Hold LB, then press and hold B for a moment.", L"PadFirstPersonCombo", L"1");
-    Gap();
-    ImGui::PushFont(theme::g_fonts.small); theme::Wrapped("Keyboard in game: Insert opens the VR menu (arrow keys to select and change), F8 recentres, F11 changes the HUD mode, F7 the monitor window eye.", theme::Muted()); ImGui::PopFont();
+    ImGui::PushFont(theme::g_fonts.bold); ImGui::TextUnformatted("How to use it"); ImGui::PopFont();
+    theme::Bullet("Insert: open or close the menu");
+    theme::Bullet("Up / Down arrows: choose a line");
+    theme::Bullet("Left / Right arrows: change the chosen setting (Right also starts an action such as Recenter view)");
+    ImGui::Dummy(ImVec2(1, 6 * g_s));
+    ImGui::PushFont(theme::g_fonts.bold); ImGui::TextUnformatted("What each line does"); ImGui::PopFont();
+    theme::Bullet("DLSS: NVIDIA DLSS on or off (RTX cards)");
+    theme::Bullet("DLSS mode: DLAA (full size), Ultra Quality, Quality, Balanced or Performance. Takes effect the next time the game starts");
+    theme::Bullet("Sharpening: off, or 0.05 to 1.00. Makes the picture crisper");
+    theme::Bullet("Bloom: the glow around bright lights, on or off");
+    theme::Bullet("HUD panel: fixed in front of you, following your head, or off");
+    theme::Bullet("HUD distance: how far away the HUD panel sits, 0.5 to 5 metres");
+    theme::Bullet("HUD scale: how large the HUD elements are");
+    theme::Bullet("World scale: how large the world feels, 0.50 to 2.00 (1.00 is the game's own scale)");
+    theme::Bullet("First person: view from Wei's eyes instead of from behind him (experimental)");
+    theme::Bullet("Monitor window: which eye the game's window on your monitor shows");
+    theme::Bullet("Gamepad shortcuts: opens the page described below");
+    theme::Bullet("Recenter view: press Right to put the view straight ahead of where you are looking");
+    ImGui::Dummy(ImVec2(1, 6 * g_s));
+    ImGui::PushFont(theme::g_fonts.bold); ImGui::TextUnformatted("Gamepad shortcuts: choose your own buttons"); ImGui::PopFont();
+    theme::Wrapped("Two shortcuts work from the gamepad: first person on / off, and recentre. Each is one or two buttons held together for a moment. Out of the box they are LB + B (first person) and LB + Y (recentre).", theme::Muted());
+    theme::Bullet("Open the VR menu, choose Gamepad shortcuts and press Right");
+    theme::Bullet("Choose Button 1 or Button 2 of a shortcut and press Right, then press the button you want on the gamepad (you have 10 seconds; Left cancels)");
+    theme::Bullet("Left on a button line sets it to None, so a shortcut can be a single button");
+    theme::Bullet("Hold time: how long the buttons must be held, 0.2 to 2.0 seconds");
+    theme::Bullet("Back returns to the main menu; Insert closes it");
+    ImGui::Dummy(ImVec2(1, 4 * g_s));
+    theme::Wrapped("The game still receives the buttons you choose. With the standard buttons, Y gets you out of a vehicle and B is the brake, so use those shortcuts on foot, or pick buttons that suit how you play. Triggers and stick clicks can be chosen too. An XInput gamepad is needed.", theme::Muted());
+    ImGui::Dummy(ImVec2(1, 6 * g_s));
+    ImGui::PushFont(theme::g_fonts.small); theme::Wrapped("Other keys in game: F8 recentres, F11 changes the HUD mode, F7 the monitor window eye.", theme::Muted()); ImGui::PopFont();
     theme::EndCard();
     ImGui::Dummy(ImVec2(1, 24 * g_s));
     ImGui::PopTextWrapPos(); ImGui::Unindent(34 * g_s);
