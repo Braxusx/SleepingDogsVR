@@ -24,7 +24,7 @@ void HalDiagInstall(volatile bool* inEyeFlag); void HalDiagReport(long long fram
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
 #include "crumb.h"
-#define SDVR_BUILD "142"
+#define SDVR_BUILD "143"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -116,13 +116,14 @@ static void DescribeTex(const char* what, ID3D11Resource* r) {
     Log("%s: %p %ux%u fmt %d samples %u mips %u bind 0x%x", what, (void*)r, td.Width, td.Height, (int)td.Format, td.SampleDesc.Count, td.MipLevels, td.BindFlags);
 }
 static ID3D11DeviceContext* volatile g_immCtx;
+void RtGameContext(ID3D11DeviceContext* ctx); void RtGameThread(int which); LONG RtForeignCalls();
 ID3D11Texture2D* DlssEvaluate(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src);
 void DlssSetSeq(long seq); void DlssSetCamera(long seq, int eye, const float* V, const float* P, float jx, float jy);
 void DlssJitter(long seq, float* jx, float* jy); void DlssConfigure(const wchar_t* ini, int* w, int* h); const char* DlssCycle(); const char* DlssJitterCycle(); const char* DlssLodCycle();
 ID3D11Texture2D* SharpenApply(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src); float SharpenAmount(); bool SharpenOn(); void SharpenSet(float a, bool on);
 static void __fastcall St_Compose(Stereo*, int eye, ID3D11DeviceContext* ctx, ID3D11Resource* dst, ID3D11Resource* src, int x) {
     if (eye < 0 || eye > 1) return;
-    g_immCtx = ctx;
+    g_immCtx = ctx; RtGameContext(ctx); RtGameThread(0);   // 143
     { static ID3D11Resource* e[2]; e[eye] = src; RtDiagSetEyes(e[0], e[1]); RtDiagInstall(ctx); RtOutlineInstall(ctx); RtQueryInstall(ctx); }
     LONG64 n = InterlockedIncrement64(&g_composes[eye]);
     if (n <= 2) { char w[64]; snprintf(w, sizeof w, "compose eye %d source", eye); DescribeTex(w, src); DescribeTex("compose destination", dst); }
@@ -745,7 +746,7 @@ static void HudFlush() {   // render thread: give the finished HUD texture (UI +
 // right after the eye copy, with the 16:9 stage viewport, and the UI render then continues on it.
 static ID3D11RenderTargetView* g_preRtv; static ID3D11DepthStencilView* g_preDsv; static bool g_hudPre;
 static void HudBeginAfterEyeCopy() {
-    ID3D11DeviceContext* ctx = g_immCtx;
+    ID3D11DeviceContext* ctx = g_immCtx; RtGameThread(1);
     if (g_preRtv) { g_preRtv->Release(); g_preRtv = nullptr; } if (g_preDsv) { g_preDsv->Release(); g_preDsv = nullptr; }
     g_hudPre = false;
     if (!g_hudMode || !g_minimapFix || !ctx) return;
@@ -769,7 +770,7 @@ static void HudBeginAfterEyeCopy() {
     RtOutlineTrace(true);
 }
 static void hkUiRender() {
-    ID3D11DeviceContext* ctx = g_immCtx;
+    ID3D11DeviceContext* ctx = g_immCtx; RtGameThread(1);
     RtOutlineTrace(false);
     if (!g_hudPre) HudFlush();   // the previous eye's HUD, if its minimap pass never came
     RtOutlineMark("UI render");
@@ -867,6 +868,7 @@ typedef void (*Present_t)(int);
 static Present_t oPresent;
 static void hkPresent(int sync) {
     LONG64 n = InterlockedIncrement64(&g_presents);
+    RtGameThread(0);
     DiagBeat(0); Crumb(CR_RENDER, "present %lld: start (front end %d, menu level %d)", (long long)n, (int)g_frontEnd, (int)g_menuLevel);
     if (n % 600 == 1)
         Log("frame %lld: stereo on %d (requested %d, fullscreen %d, Stereo3D setting %d), eye frames %lld/%lld, composes %lld/%lld, separation %.4f, mirror %d",
@@ -877,6 +879,7 @@ static void hkPresent(int sync) {
         static long long armedAt = -1;
         if (n == 1800 || n == 5400) LogCmds();
         if (n % 1800 == 900) Log("  ui: %ld minimap passes moved to the HUD target so far, %ld glow blend states adjusted", RtMinimapRedirects(), RtGlowFixCount());
+        if (n % 600 == 300) { static LONG lastF = -1; LONG f = RtForeignCalls(); if (f != lastF) { Log("  d3d: %ld calls from other threads / other devices' contexts left alone so far", f); lastF = f; } }
         RtDiagNewFrame();
         HudFlush();
         { LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f); bool cut = g_cutsceneQpc && q.QuadPart - g_cutsceneQpc < f.QuadPart / 4;

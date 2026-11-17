@@ -23,6 +23,7 @@ static void Where(void* addr, char* out, size_t cap) {
         snprintf(out, cap, "%s+0x%llx", n, (unsigned long long)((uintptr_t)addr - (uintptr_t)m));
     } else snprintf(out, cap, "%p", addr);
 }
+void CrashWhere(void* ip, char* out, size_t cap) { Where(ip, out, cap); }
 static bool Rd(uintptr_t a, void* o, size_t n) { SIZE_T g = 0; return a > 0x10000 && ReadProcessMemory(GetCurrentProcess(), (void*)a, o, n, &g) && g == n; }
 static void RdText(uintptr_t a, char* out, size_t cap) {   // a zero-ended string that may sit at the end of a page
     memset(out, 0, cap);

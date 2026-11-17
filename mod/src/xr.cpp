@@ -82,10 +82,10 @@ XRFN(xrGetSystemProperties); XRFN(xrResultToString);
 // 142: every call into the OpenXR runtime leaves a mark in the state file when it is entered and when it returns (with the
 // time it took), and failed calls are written to the log. After a crash or a freeze the state file shows whether a thread
 // was inside the runtime and in which call.
-static DWORD g_xrRenderTid;
+static DWORD g_xrRenderTid; static volatile LONG g_xrSeq;
 template <class F, class... A> static XrResult XrCall(const char* name, F f, A... a) {
     DWORD tid = GetCurrentThreadId(); int slot = (!g_xrRenderTid || tid == g_xrRenderTid) ? CR_XR_RENDER : CR_XR_OTHER;
-    static volatile LONG seq; LONG k = InterlockedIncrement(&seq);
+    LONG k = InterlockedIncrement(&g_xrSeq);   // 143: one counter for all calls (it was one per kind of call), so the two state lines can be put in order
     Crumb(slot, "INSIDE %s (call %ld, thread %lu)", name, k, tid);
     LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
     XrResult r = f(a...);

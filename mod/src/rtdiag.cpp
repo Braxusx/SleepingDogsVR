@@ -31,6 +31,38 @@ LONG RtUiRedirectCount() { return g_uiRedirects; }
 // states get an alpha path that keeps the target's alpha; with premultiplied compositing of the HUD layer the glow's
 // colour is then simply added over the world, as on the flat screen.
 typedef void (STDMETHODCALLTYPE *Blend_t)(ID3D11DeviceContext*, ID3D11BlendState*, const FLOAT[4], UINT);
+// ---------------------------------------------------------------------------------------------------------------------
+// 143: the hooks below sit on the D3D11 functions themselves, so they are entered for EVERY device context in the process and
+// from every thread - also the VR runtime's own device, an overlay's, the DLSS runtime's. All of the mod's logic assumes the
+// game's immediate context on the game's render thread: a call from anywhere else used to be treated like a game call (state
+// replaced with objects of the game's device, the HUD handed to the headset from the wrong thread while the render thread was
+// inside xrEndFrame). Such calls are now passed straight through, and the first ones are logged with who made them.
+void CrashWhere(void* ip, char* out, size_t cap);
+static ID3D11DeviceContext* volatile g_gameCtx; static volatile DWORD g_gameTid[2]; static volatile LONG g_foreignN;
+void RtGameContext(ID3D11DeviceContext* ctx) { if (ctx) g_gameCtx = ctx; }
+void RtGameThread(int which) { g_gameTid[which & 1] = GetCurrentThreadId(); }   // 0 = present / compose, 1 = the render command player
+LONG RtForeignCalls() { return g_foreignN; }
+static bool ForeignSlow(ID3D11DeviceContext* c, const char* what, DWORD tid) {
+    if (!g_gameCtx) return false;
+    InterlockedIncrement(&g_foreignN);
+    static volatile LONG nSeen; static struct { DWORD tid; ID3D11DeviceContext* c; } seen[24];
+    LONG n = nSeen; for (LONG i = 0; i < n && i < 24; i++) if (seen[i].tid == tid && seen[i].c == c) return true;
+    LONG k = InterlockedIncrement(&nSeen) - 1; if (k >= 24) { InterlockedDecrement(&nSeen); return true; }
+    seen[k].tid = tid; seen[k].c = c;
+    void* fr[12]; USHORT nf = RtlCaptureStackBackTrace(2, 12, fr, nullptr); char line[1500]; int o = 0; char w[300];
+    for (USHORT i = 0; i < nf && o < (int)sizeof line - 320; i++) { CrashWhere(fr[i], w, sizeof w); o += snprintf(line + o, sizeof line - o, "%s%s", i ? " < " : "", w); }
+    int type = -1; ID3D11Device* dev = nullptr, *gdev = nullptr; bool sameDev = false;
+    if (c != g_gameCtx) { type = (int)c->GetType(); c->GetDevice(&dev); g_gameCtx->GetDevice(&gdev); sameDev = dev == gdev; if (dev) dev->Release(); if (gdev) gdev->Release(); }
+    Log("d3d: %s on thread %lu, %s (render threads %lu / %lu) - left alone from now on. Called from: %s", what, tid,
+        c == g_gameCtx ? "the game's own context but not its render thread" : sameDev ? (type == 1 ? "a deferred context of the game's device" : "another context of the game's device") : "a context of ANOTHER device",
+        g_gameTid[0], g_gameTid[1], line);
+    return true;
+}
+static inline bool Foreign(ID3D11DeviceContext* c, const char* what) {
+    DWORD t = GetCurrentThreadId();
+    if (c == g_gameCtx && (t == g_gameTid[0] || t == g_gameTid[1])) return false;
+    return ForeignSlow(c, what, t);
+}
 static Blend_t oBlend;
 static bool g_haveBlend; static ID3D11BlendState* g_curBlend; static FLOAT g_curFactor[4] = {1, 1, 1, 1}; static UINT g_curMask = 0xffffffff;
 static ID3D11RenderTargetView* volatile g_hudRtvPtr; static bool g_rtIsHud; static volatile int g_glowFix = 1;
@@ -55,7 +87,7 @@ static ID3D11BlendState* HudBlend(ID3D11DeviceContext* c, ID3D11BlendState* bs) 
     if (g_nBs < 64) { g_bsFrom[g_nBs] = bs; g_bsTo[g_nBs] = out; bs->AddRef(); g_nBs++; }
     return out;
 }
-static void STDMETHODCALLTYPE hkBlend(ID3D11DeviceContext* c, ID3D11BlendState* bs, const FLOAT f[4], UINT mask) {
+static void STDMETHODCALLTYPE hkBlend(ID3D11DeviceContext* c, ID3D11BlendState* bs, const FLOAT f[4], UINT mask) { if (Foreign(c, "OMSetBlendState")) { oBlend(c, bs, f, mask); return; }
     g_haveBlend = true; g_curBlend = bs; if (f) memcpy(g_curFactor, f, sizeof g_curFactor); g_curMask = mask;
     ID3D11BlendState* use = g_rtIsHud ? HudBlend(c, bs) : bs;
     if (use != bs) InterlockedIncrement(&g_glowFixed);
@@ -87,13 +119,13 @@ extern bool g_rtBypass;
 float DlssLodBias(); ID3D11SamplerState* DlssSampler(ID3D11SamplerState* s);
 typedef void (STDMETHODCALLTYPE *PSSamp_t)(ID3D11DeviceContext*, UINT, UINT, ID3D11SamplerState* const*);
 static PSSamp_t oPSSamp;
-static void STDMETHODCALLTYPE hkPSSamp(ID3D11DeviceContext* c, UINT slot, UINT n, ID3D11SamplerState* const* s) {
+static void STDMETHODCALLTYPE hkPSSamp(ID3D11DeviceContext* c, UINT slot, UINT n, ID3D11SamplerState* const* s) { if (Foreign(c, "PSSetSamplers")) { oPSSamp(c, slot, n, s); return; }
     if (g_rtBypass || !s || n == 0 || n > 16 || DlssLodBias() == 0.f) { oPSSamp(c, slot, n, s); return; }
     ID3D11SamplerState* r[16]; for (UINT i = 0; i < n; i++) r[i] = DlssSampler(s[i]);
     oPSSamp(c, slot, n, r);
 }
 extern bool g_rtBypass; void DlssNoteTargets(UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv);
-static void STDMETHODCALLTYPE hkOMSet(ID3D11DeviceContext* c, UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv) {
+static void STDMETHODCALLTYPE hkOMSet(ID3D11DeviceContext* c, UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv) { if (Foreign(c, "OMSetRenderTargets")) { oOMSet(c, n, rtv, dsv); return; }
     if (g_rtBypass) { oOMSet(c, n, rtv, dsv); return; }   // 079: the mod's own DLSS passes
     DlssNoteTargets(n, rtv, dsv);
     if (g_stateFix == 2) InterlockedIncrement(&g_stateGen);
@@ -215,14 +247,14 @@ static ID3D11ShaderResourceView* g_srv[16]; static void* g_ps; static void* g_vs
 struct DD { void* ps; short rt; short t[16]; };
 static void* g_skipC[32]; static int g_nSkipC; static void* volatile g_skipPs; static int g_skipI = -1;
 static DD g_dd[30000]; static int g_nDD; static int g_passAt[8]; static int g_nPassAt; static int g_frameB = -1, g_olFrames, g_frameBMarks;
-static void STDMETHODCALLTYPE hkPSSRV(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11ShaderResourceView* const* v) {
+static void STDMETHODCALLTYPE hkPSSRV(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11ShaderResourceView* const* v) { if (Foreign(c, "PSSetShaderResources")) { oPSSRV(c, st, n, v); return; }
     for (UINT i = 0; i < n && st + i < 16; i++) g_srv[st + i] = v ? v[i] : nullptr;
     oPSSRV(c, st, n, v);
 }
-static void STDMETHODCALLTYPE hkPSSh(ID3D11DeviceContext* c, ID3D11PixelShader* ps, ID3D11ClassInstance* const* ci, UINT n) { g_ps = ps; oPSSh(c, ps, ci, n); }
+static void STDMETHODCALLTYPE hkPSSh(ID3D11DeviceContext* c, ID3D11PixelShader* ps, ID3D11ClassInstance* const* ci, UINT n) { if (Foreign(c, "PSSetShader")) { oPSSh(c, ps, ci, n); return; } g_ps = ps; oPSSh(c, ps, ci, n); }
 typedef void (STDMETHODCALLTYPE *VSSh_t)(ID3D11DeviceContext*, ID3D11VertexShader*, ID3D11ClassInstance* const*, UINT);
 static VSSh_t oVSSh;
-static void STDMETHODCALLTYPE hkVSSh(ID3D11DeviceContext* c, ID3D11VertexShader* vs, ID3D11ClassInstance* const* ci, UINT n) { g_vs = vs; oVSSh(c, vs, ci, n); }
+static void STDMETHODCALLTYPE hkVSSh(ID3D11DeviceContext* c, ID3D11VertexShader* vs, ID3D11ClassInstance* const* ci, UINT n) { if (Foreign(c, "VSSetShader")) { oVSSh(c, vs, ci, n); return; } g_vs = vs; oVSSh(c, vs, ci, n); }
 static short ViewRes(ID3D11View* v) { if (!v) return -1; ID3D11Resource* r = nullptr; v->GetResource(&r); short id = (short)ResId(r); if (r) r->Release(); return id; }
 static void DiffDraw() {
     if (g_nDD >= 30000) return;
@@ -889,7 +921,7 @@ static volatile bool g_olTrace;
 void RtOutlineTrace(bool on) { g_olTrace = on; }
 static void DiffDraw();
 static void OlDraw() { DiffDraw(); if (g_olTrace) if (OlE* e = OlAdd('D')) { (void)e; } }
-static void STDMETHODCALLTYPE hkVP(ID3D11DeviceContext* c, UINT n, const D3D11_VIEWPORT* v) {
+static void STDMETHODCALLTYPE hkVP(ID3D11DeviceContext* c, UINT n, const D3D11_VIEWPORT* v) { if (Foreign(c, "RSSetViewports")) { oVP(c, n, v); return; }
     D3D11_VIEWPORT mv;
     if (g_mmHud && g_mmFitOn && n == 1 && v && v[0].TopLeftX == 0 && v[0].TopLeftY == 0 && v[0].Width == g_eyeW && v[0].Height == g_eyeH && g_eyeW > 0) {   // the minimap pass: fit the UI stage
         mv = v[0]; float a = mv.Width / mv.Height;
@@ -900,7 +932,7 @@ static void STDMETHODCALLTYPE hkVP(ID3D11DeviceContext* c, UINT n, const D3D11_V
     if (g_ol == 2 && n && v) if (OlE* e = OlAdd('V')) { e->a = (int)v[0].TopLeftX; e->b = (int)v[0].TopLeftY; e->c = (int)v[0].Width; e->d = (int)v[0].Height; }
     oVP(c, n, v);
 }
-static void STDMETHODCALLTYPE hkSC(ID3D11DeviceContext* c, UINT n, const D3D11_RECT* r) {
+static void STDMETHODCALLTYPE hkSC(ID3D11DeviceContext* c, UINT n, const D3D11_RECT* r) { if (Foreign(c, "RSSetScissorRects")) { oSC(c, n, r); return; }
     if (g_ol == 2 && n && r) if (OlE* e = OlAdd('S')) { e->a = r[0].left; e->b = r[0].top; e->c = r[0].right - r[0].left; e->d = r[0].bottom - r[0].top; }
     oSC(c, n, r);
 }
@@ -1185,23 +1217,23 @@ static void HeightmapFix(ID3D11DeviceContext* c) {
 }
 int ShaderFindRes(void* sh, const char* name);
 typedef HRESULT (STDMETHODCALLTYPE *MapFn_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, D3D11_MAP, UINT, D3D11_MAPPED_SUBRESOURCE*);
-static HRESULT STDMETHODCALLTYPE hkMap(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s, D3D11_MAP t, UINT f, D3D11_MAPPED_SUBRESOURCE* m) {
+static HRESULT STDMETHODCALLTYPE hkMap(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s, D3D11_MAP t, UINT f, D3D11_MAPPED_SUBRESOURCE* m) { if (Foreign(c, "Map")) { return oMap(c, r, s, t, f, m); }
     int k = -1; if (t != D3D11_MAP_READ) { k = WrAdd(r); ProvWrite(r); }
     HRESULT hr = oMap(c, r, s, t, f, m);
     if (k >= 0 && SUCCEEDED(hr) && m && m->pData) for (auto& e : g_mapPend) if (!e.r || e.r == r) { e.r = r; e.p = m->pData; e.k = k; break; }
     return hr;
 }
 typedef void (STDMETHODCALLTYPE *Unmap_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT); static Unmap_t oUnmap;
-static void STDMETHODCALLTYPE hkUnmap(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s) {
+static void STDMETHODCALLTYPE hkUnmap(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s) { if (Foreign(c, "Unmap")) { oUnmap(c, r, s); return; }
     for (auto& e : g_mapPend) if (e.r == r) { if (g_wrSet[e.k] == r) { memcpy(g_wrData[e.k], e.p, g_wrSize[e.k]); } e.r = nullptr; break; }
     oUnmap(c, r, s);
 }
-static void STDMETHODCALLTYPE hkUSR(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s, const D3D11_BOX* b, const void* d, UINT rp, UINT dp) { int k = WrAdd(r); if (k >= 0 && d && !b) { memcpy(g_wrData[k], d, g_wrSize[k]); } ProvWrite(r); oUSR(c, r, s, b, d, rp, dp); }
-static void STDMETHODCALLTYPE hkPSCB(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11Buffer* const* b) {
+static void STDMETHODCALLTYPE hkUSR(ID3D11DeviceContext* c, ID3D11Resource* r, UINT s, const D3D11_BOX* b, const void* d, UINT rp, UINT dp) { if (Foreign(c, "UpdateSubresource")) { oUSR(c, r, s, b, d, rp, dp); return; } int k = WrAdd(r); if (k >= 0 && d && !b) { memcpy(g_wrData[k], d, g_wrSize[k]); } ProvWrite(r); oUSR(c, r, s, b, d, rp, dp); }
+static void STDMETHODCALLTYPE hkPSCB(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11Buffer* const* b) { if (Foreign(c, "PSSetConstantBuffers")) { oPSCB(c, st, n, b); return; }
     if (ProvOn()) for (UINT i = 0; i < n; i++) if (st + i < 4) { g_psSet[st + i].buf = b ? b[i] : nullptr; g_psSet[st + i].seq = g_dseq; }
     oPSCB(c, st, n, b);
 }
-static void STDMETHODCALLTYPE hkVSCB(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11Buffer* const* b) {
+static void STDMETHODCALLTYPE hkVSCB(ID3D11DeviceContext* c, UINT st, UINT n, ID3D11Buffer* const* b) { if (Foreign(c, "VSSetConstantBuffers")) { oVSCB(c, st, n, b); return; }
     if (ProvOn()) for (UINT i = 0; i < n; i++) if (st + i < 4) { g_vsSet[st + i].buf = b ? b[i] : nullptr; Stack4(g_vsSet[st + i].s); }
     oVSCB(c, st, n, b);
 }
@@ -1339,19 +1371,19 @@ static bool OverlaySkip(ID3D11DeviceContext* c, UINT count) {
     if (e.v == 3 && g_hideBlur) { ID3D11ShaderResourceView* sr = nullptr; c->PSGetShaderResources(0, 1, &sr); if (sr) { c->PSSetShaderResources(1, 1, &sr); sr->Release(); } }
     return false;
 }
-static void STDMETHODCALLTYPE hkDI(ID3D11DeviceContext* c, UINT a, UINT b, INT d) { if (OverlaySkip(c, a)) return; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a, b, (UINT)d, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oDI(c, a, b, d); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a); ProbeAfter(c, a, b, (UINT)d, 0); }
-static void STDMETHODCALLTYPE hkD(ID3D11DeviceContext* c, UINT a, UINT b) { if (OverlaySkip(c, a)) return; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a, b, 0, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oD(c, a, b); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a); ProbeAfter(c, a, b, 0, 0); }
-static void STDMETHODCALLTYPE hkDII(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, INT e, UINT f) { if (OverlaySkip(c, a * b)) return; g_startInst = f; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a * 100000 + b, d, (UINT)e, f); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); if (g_rainFix) HeightmapFix(c); oDII(c, a, b, d, e, f); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a * 100000 + b); ProbeAfter(c, a * 100000 + b, d, (UINT)e, f); }
-static void STDMETHODCALLTYPE hkDIn(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, UINT e) { g_startInst = e; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a * 100000 + b, d, e, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oDIn(c, a, b, d, e); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a * 100000 + b); ProbeAfter(c, a * 100000 + b, d, e, 0); }
-static void STDMETHODCALLTYPE hkCSR(ID3D11DeviceContext* c, ID3D11Resource* dst, UINT ds, UINT x, UINT y, UINT z, ID3D11Resource* src, UINT ss, const D3D11_BOX* box) {
+static void STDMETHODCALLTYPE hkDI(ID3D11DeviceContext* c, UINT a, UINT b, INT d) { if (Foreign(c, "DrawIndexed")) { oDI(c, a, b, d); return; } if (OverlaySkip(c, a)) return; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a, b, (UINT)d, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oDI(c, a, b, d); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a); ProbeAfter(c, a, b, (UINT)d, 0); }
+static void STDMETHODCALLTYPE hkD(ID3D11DeviceContext* c, UINT a, UINT b) { if (Foreign(c, "Draw")) { oD(c, a, b); return; } if (OverlaySkip(c, a)) return; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a, b, 0, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oD(c, a, b); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a); ProbeAfter(c, a, b, 0, 0); }
+static void STDMETHODCALLTYPE hkDII(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, INT e, UINT f) { if (Foreign(c, "DrawIndexedInstanced")) { oDII(c, a, b, d, e, f); return; } if (OverlaySkip(c, a * b)) return; g_startInst = f; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a * 100000 + b, d, (UINT)e, f); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); if (g_rainFix) HeightmapFix(c); oDII(c, a, b, d, e, f); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a * 100000 + b); ProbeAfter(c, a * 100000 + b, d, (UINT)e, f); }
+static void STDMETHODCALLTYPE hkDIn(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, UINT e) { if (Foreign(c, "DrawInstanced")) { oDIn(c, a, b, d, e); return; } g_startInst = e; if (g_skipPs && g_ps == g_skipPs && g_ol != 2) return; if (g_ol == 2) { g_olDraws++; OlDraw(); CbDump(c); } DumpDraw(); GbDraw(c, a * 100000 + b, d, e, 0); { int sfs = 0; g_sfCount = a; ID3D11Buffer* sfo = SceneryFixBegin(c, &sfs); oDIn(c, a, b, d, e); SceneryFixEnd(c, sfo, sfs); } DumpAfter(c, a * 100000 + b); ProbeAfter(c, a * 100000 + b, d, e, 0); }
+static void STDMETHODCALLTYPE hkCSR(ID3D11DeviceContext* c, ID3D11Resource* dst, UINT ds, UINT x, UINT y, UINT z, ID3D11Resource* src, UINT ss, const D3D11_BOX* box) { if (Foreign(c, "CopySubresourceRegion")) { oCSR(c, dst, ds, x, y, z, src, ss, box); return; }
     if (g_ol == 2) if (OlE* e = OlAdd('C')) { e->r0 = dst; e->r1 = src; ResId(dst); ResId(src); e->a = x; e->b = y; if (box) { e->c = box->right - box->left; e->d = box->bottom - box->top; } else e->c = e->d = -1; }
     oCSR(c, dst, ds, x, y, z, src, ss, box);
 }
-static void STDMETHODCALLTYPE hkCR(ID3D11DeviceContext* c, ID3D11Resource* dst, ID3D11Resource* src) {
+static void STDMETHODCALLTYPE hkCR(ID3D11DeviceContext* c, ID3D11Resource* dst, ID3D11Resource* src) { if (Foreign(c, "CopyResource")) { oCR(c, dst, src); return; }
     if (g_ol == 2) if (OlE* e = OlAdd('R')) { e->r0 = dst; e->r1 = src; ResId(dst); ResId(src); }
     oCR(c, dst, src);
 }
-static void STDMETHODCALLTYPE hkCL(ID3D11DeviceContext* c, ID3D11RenderTargetView* v, const FLOAT col[4]) {
+static void STDMETHODCALLTYPE hkCL(ID3D11DeviceContext* c, ID3D11RenderTargetView* v, const FLOAT col[4]) { if (Foreign(c, "ClearRenderTargetView")) { oCL(c, v, col); return; }
     if (g_ol == 2 && v) if (OlE* e = OlAdd('L')) { ID3D11Resource* r = nullptr; v->GetResource(&r); e->r0 = r; ResId(r); if (r) r->Release(); e->a = (int)(col[3] * 100); }
     oCL(c, v, col);
 }
@@ -1423,7 +1455,7 @@ int RtSkipNext(char* label, int n) {
 // 0 = off, 1 = occlusion queries whose result is not ready or zero report "visible" (test).
 typedef HRESULT (STDMETHODCALLTYPE *GetData_t)(ID3D11DeviceContext*, ID3D11Asynchronous*, void*, UINT, UINT);
 static GetData_t oGetData; static volatile int g_qTest; static volatile LONG g_qCalls, g_qNotReady, g_qZero, g_qForced;
-static HRESULT STDMETHODCALLTYPE hkGetData(ID3D11DeviceContext* c, ID3D11Asynchronous* a, void* d, UINT n, UINT f) {
+static HRESULT STDMETHODCALLTYPE hkGetData(ID3D11DeviceContext* c, ID3D11Asynchronous* a, void* d, UINT n, UINT f) { if (Foreign(c, "GetData")) { return oGetData(c, a, d, n, f); }
     HRESULT hr = oGetData(c, a, d, n, f);
     if (!g_qTest) return hr;   // 088: the occlusion query census only runs during the query test
     ID3D11Query* q = nullptr;
