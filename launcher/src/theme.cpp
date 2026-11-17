@@ -76,7 +76,21 @@ void SpacedCaps(ImDrawList* dl, ImFont* f, ImVec2 p, ImU32 col, const char* text
 // ---------------------------------------------------------------- banner
 // hero = the Main Menu: the art nearly whole (its logo is the title, so no title text). Other pages: a strip from the
 // right-hand part of the art with the page title on its darkened left.
+static void BannerInner(const char* title, const char* subtitle, bool hero);
 void Banner(const char* title, const char* subtitle, bool hero) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    BannerInner(title, subtitle, hero);
+#ifdef SDVR_DIAGNOSTIC
+    {   // a tag in the banner's top left corner on every page
+        ImDrawList* dl = ImGui::GetWindowDrawList(); ImFont* f = g_fonts.bold; const char* t = "DIAGNOSTIC BUILD  " SDVR_VERSION;
+        ImVec2 ts = f->CalcTextSizeA(f->FontSize, 1e9f, 0, t); float px = 12 * g_s, py = 6 * g_s; ImVec2 a(p.x + 16 * g_s, p.y + 14 * g_s), b(a.x + ts.x + 2 * px, a.y + ts.y + 2 * py);
+        dl->AddRectFilled(ImVec2(a.x + 2, a.y + 2), ImVec2(b.x + 2, b.y + 2), IM_COL32(0, 0, 0, 150), 4 * g_s);
+        dl->AddRectFilled(a, b, IM_COL32(255, 186, 40, 245), 4 * g_s);
+        dl->AddText(f, f->FontSize, ImVec2(a.x + px, a.y + py), IM_COL32(20, 16, 6, 255), t);
+    }
+#endif
+}
+static void BannerInner(const char* title, const char* subtitle, bool hero) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos(); float W = ImGui::GetContentRegionAvail().x;
     float H = std::round(W * (hero ? 0.46f : 0.20f));

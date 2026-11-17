@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.5 - diagnostic build
+
+Plays the same as 0.8.4. This release adds diagnostics for crashes and freezes that leave nothing in the log (reported with
+Virtual Desktop in VDXR mode). If you have no crashes you do not need it, but it does no harm.
+
+- **State file.** `sdvr_state.txt` in the game folder always shows what the mod was doing last: the OpenXR call each thread
+  was inside, the frame, memory use, the last exception. It survives every kind of crash.
+- **The previous run is kept.** When the game starts, the last run's files are kept as `sdvr_previous.log` and
+  `sdvr_previous_state.txt`, so starting the game again after a crash no longer wipes the evidence.
+- **Freezes are recorded.** When the game stops producing frames the log gets a `STALL` entry with what the render thread and
+  the game thread were doing.
+- **More exits are recorded:** abort and fail-fast exits, a lost graphics device (with the reason), and C++ exceptions with
+  their class name and message.
+- **Machine details in the log:** graphics card and driver, Windows build, processor, memory use once a minute, a warning when
+  graphics memory is full, and modules that other programs loaded into the game (overlays, capture tools).
+- **Launcher:** marked as a diagnostic build; *Collect logs* gathers the new files; uninstall removes them.
+- Mod build 142.
+
+**Reporting a crash:** About > Collect logs in the launcher, and send the zip. Please also say whether the game froze or
+vanished and what you were doing.
+
 ## 0.8.4
 
 - **Gamepad shortcuts are yours to choose.** In the VR menu (Insert) the new page *Gamepad shortcuts* lists two buttons each

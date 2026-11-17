@@ -295,6 +295,13 @@ static void PageMainDraw(HWND hwnd) {
     ImGui::Dummy(ImVec2(1, 4 * g_s));
     ImGui::Indent(34 * g_s); ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 34 * g_s);
     float W = ImGui::GetContentRegionMax().x - 34 * g_s - ImGui::GetCursorPosX();
+#ifdef SDVR_DIAGNOSTIC
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 196, 70, 255)));
+    ImGui::TextWrapped("DIAGNOSTIC BUILD. The mod plays the same as the normal release, and records extra detail for tracking down crashes and freezes. "
+                       "If the game crashes or freezes, use About > Collect logs and send the zip with your report.");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(1, 4 * g_s));
+#endif
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(IM_COL32(198, 204, 218, 255)));
     ImGui::TextWrapped("Hong Kong in full native stereo with head tracking, NVIDIA DLSS / DLAA, an in-headset HUD panel, optional first person view and the SPatch fixes built in");
     ImGui::PopStyleColor();
@@ -742,7 +749,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     int x = mi.rcWork.left + (workW - w) / 2, y = mi.rcWork.top + (workH - h) / 2;
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Sleeping Dogs VR", WS_OVERLAPPEDWINDOW, x, y, w, h, nullptr, nullptr, inst, nullptr);
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, 
+#ifdef SDVR_DIAGNOSTIC
+        L"Sleeping Dogs VR - diagnostic build " L"" SDVR_VERSION,
+#else
+        L"Sleeping Dogs VR",
+#endif
+        WS_OVERLAPPEDWINDOW, x, y, w, h, nullptr, nullptr, inst, nullptr);
     { BOOL dark = TRUE; typedef HRESULT (WINAPI *DSWA)(HWND, DWORD, LPCVOID, DWORD); auto f = (DSWA)GetProcAddress(LoadLibraryW(L"dwmapi.dll"), "DwmSetWindowAttribute"); if (f) { f(hwnd, 20, &dark, sizeof dark); COLORREF cap = RGB(10, 11, 18); f(hwnd, 35, &cap, sizeof cap); } }
     if (!CreateDevice(hwnd)) { MessageBoxW(hwnd, L"Direct3D 11 isn't available on this PC, so the launcher can't open.", L"Sleeping Dogs VR", MB_ICONERROR); return 1; }
     ShowWindow(hwnd, show); UpdateWindow(hwnd);
