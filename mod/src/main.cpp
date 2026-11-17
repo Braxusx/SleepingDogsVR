@@ -23,7 +23,8 @@ void XrHudSubmit(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex); void RtDiagIns
 void HalDiagInstall(volatile bool* inEyeFlag); void HalDiagReport(long long frames);
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
-#define SDVR_BUILD "140"
+#include "crumb.h"
+#define SDVR_BUILD "142"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -866,6 +867,7 @@ typedef void (*Present_t)(int);
 static Present_t oPresent;
 static void hkPresent(int sync) {
     LONG64 n = InterlockedIncrement64(&g_presents);
+    DiagBeat(0); Crumb(CR_RENDER, "present %lld: start (front end %d, menu level %d)", (long long)n, (int)g_frontEnd, (int)g_menuLevel);
     if (n % 600 == 1)
         Log("frame %lld: stereo on %d (requested %d, fullscreen %d, Stereo3D setting %d), eye frames %lld/%lld, composes %lld/%lld, separation %.4f, mirror %d",
             n, At<uint8_t>(rva::FlagStereoOn), At<uint8_t>(rva::FlagStereoReq), At<uint8_t>(rva::FlagFullscreen), At<uint8_t>(rva::SettingsStereo),
@@ -896,8 +898,11 @@ static void hkPresent(int sync) {
     if (n % 600 == 1) Log("  fog updates: eye0 %ld eye1 %ld outside the eyes %ld (sync %d)", (long)g_fogCalls[0], (long)g_fogCalls[1], (long)g_fogCalls[2], (int)g_fogSync);
     if (n % 600 == 1) Log("  markers: view calls %ld (real view given %ld, left as is %ld), perspective calls %ld", (long)g_mkView, (long)g_mkViewSwap, (long)g_mkViewOther, (long)g_mkPersp);
     if (n % 600 == 1) Log("  shadow collector constants made: eye 0 %lld, eye 1 %lld, outside the eyes %lld; shadow mode %d, cull mode %d", g_shadowCbCalls[0], g_shadowCbCalls[1], g_shadowCbCalls[2], g_shadowFix, g_cullFix);
+    Crumb(CR_RENDER, "present %lld: inside the game's own present", (long long)n);
     oPresent(sync);
+    Crumb(CR_RENDER, "present %lld: handing the frame to the headset", (long long)n);
     XrAfterPresent();
+    Crumb(CR_RENDER, "present %lld: done, drawing the next frame (front end %d, menu level %d)", (long long)n, (int)g_frontEnd, (int)g_menuLevel);
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,6 +1029,8 @@ static void hkSdDraw(void* self, void* view) {
 }
 static uint32_t FaRead() { uintptr_t a = At<uintptr_t>(0x2167810); if (!a) return 0; uint32_t* c = *(uint32_t**)(a + 0x28); g_faSz[0] = *(uint64_t*)(a + 0x10); g_faSz[1] = *(uint32_t*)(a + 0x18); g_faSz[2] = *(uint64_t*)(a + 0x20); return c ? *c : 0; }
 static void hkEyeFrame(float a, int eye) {
+    if (eye == 0) DiagBeat(1);
+    Crumb(CR_GAME, "frame %lld, eye pass %d started (front end %d, menu level %d)", (long long)g_eyeFrames[0], eye, (int)g_frontEnd, (int)g_menuLevel);
     uint32_t s = FaRead();
     g_eyeCtx = (eye == 0 || eye == 1) ? eye : -1;
     hkEyeFrameInner(a, eye);
@@ -1294,6 +1301,7 @@ LPCVOID WINAPI Proxy_GetdfDIJoystick() { auto f = (LPCVOID(WINAPI*)())Real("Getd
 static void Init() {
     GetModuleFileNameW(g_self, g_dir, MAX_PATH);
     if (wchar_t* s = wcsrchr(g_dir, L'\\')) *s = 0;
+    CrumbInit(g_dir);   // 142: keeps the previous run's log + state file, then starts the new state file
     wchar_t lp[MAX_PATH]; swprintf(lp, MAX_PATH, L"%ls\\sdvr.log", g_dir); LogInit(lp);
     swprintf(g_ini, MAX_PATH, L"%ls\\sdvr.ini", g_dir);
     EyeCapInit(g_dir); RtDumpInit(g_dir);
@@ -1341,6 +1349,7 @@ static void Init() {
     ShaderInfoInstall();
     InputBlockInstall();
     CrashLogInstall();
+    CrumbReportPrevious(); DiagStart(g_ini);
     PatchWindowed();
     PatchRenderSize();
     {   // build 007: the game's stereo stage rebuilds the render view from the camera only for eye 1 (+0x595fa:

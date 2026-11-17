@@ -9,7 +9,7 @@ static ULONGLONG g_t0;
 
 void LogInit(const wchar_t* path) {
     InitializeCriticalSection(&g_cs);
-    g_t0 = GetTickCount64();
+    if (!g_t0) g_t0 = GetTickCount64();
     g_file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL, nullptr);
 }
@@ -32,6 +32,8 @@ void Log(const char* fmt, ...) {
     WriteFile(g_file, buf, (DWORD)n, &w, nullptr);
     LeaveCriticalSection(&g_cs);
 }
+
+ULONGLONG LogMs() { return g_t0 ? GetTickCount64() - g_t0 : 0; }
 
 void LogFlush() {
     if (g_file != INVALID_HANDLE_VALUE) FlushFileBuffers(g_file);

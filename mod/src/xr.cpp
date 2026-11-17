@@ -17,6 +17,7 @@
 #include <openxr/openxr_loader_negotiation.h>
 #include "log.h"
 #include "xr.h"
+#include "crumb.h"
 
 static PFN_xrGetInstanceProcAddr gpa;
 static XrInstance g_inst;
@@ -78,6 +79,42 @@ XRFN(xrBeginSession); XRFN(xrEndSession); XRFN(xrWaitFrame); XRFN(xrBeginFrame);
 XRFN(xrEnumerateViewConfigurationViews); XRFN(xrEnumerateSwapchainFormats); XRFN(xrCreateSwapchain); XRFN(xrDestroySwapchain); XRFN(xrEnumerateSwapchainImages);
 XRFN(xrAcquireSwapchainImage); XRFN(xrWaitSwapchainImage); XRFN(xrReleaseSwapchainImage); XRFN(xrGetInstanceProperties);
 XRFN(xrGetSystemProperties); XRFN(xrResultToString);
+// 142: every call into the OpenXR runtime leaves a mark in the state file when it is entered and when it returns (with the
+// time it took), and failed calls are written to the log. After a crash or a freeze the state file shows whether a thread
+// was inside the runtime and in which call.
+static DWORD g_xrRenderTid;
+template <class F, class... A> static XrResult XrCall(const char* name, F f, A... a) {
+    DWORD tid = GetCurrentThreadId(); int slot = (!g_xrRenderTid || tid == g_xrRenderTid) ? CR_XR_RENDER : CR_XR_OTHER;
+    static volatile LONG seq; LONG k = InterlockedIncrement(&seq);
+    Crumb(slot, "INSIDE %s (call %ld, thread %lu)", name, k, tid);
+    LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
+    XrResult r = f(a...);
+    QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+    double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+    Crumb(slot, "returned from %s with %d after %.1f ms (call %ld, thread %lu)", name, (int)r, ms, k, tid);
+    if (XR_FAILED(r)) { static volatile LONG fails; if (InterlockedIncrement(&fails) <= 40) Log("xr: %s failed with %d (thread %lu)", name, (int)r, tid); }
+    else if (ms > 1000.0) { static volatile LONG slow; if (InterlockedIncrement(&slow) <= 40) Log("xr: %s took %.0f ms (thread %lu)", name, ms, tid); }
+    return r;
+}
+#define xrCreateInstance(...) XrCall("xrCreateInstance", xrCreateInstance, __VA_ARGS__)
+#define xrGetSystem(...) XrCall("xrGetSystem", xrGetSystem, __VA_ARGS__)
+#define xrCreateSession(...) XrCall("xrCreateSession", xrCreateSession, __VA_ARGS__)
+#define xrCreateReferenceSpace(...) XrCall("xrCreateReferenceSpace", xrCreateReferenceSpace, __VA_ARGS__)
+#define xrPollEvent(...) XrCall("xrPollEvent", xrPollEvent, __VA_ARGS__)
+#define xrBeginSession(...) XrCall("xrBeginSession", xrBeginSession, __VA_ARGS__)
+#define xrEndSession(...) XrCall("xrEndSession", xrEndSession, __VA_ARGS__)
+#define xrWaitFrame(...) XrCall("xrWaitFrame", xrWaitFrame, __VA_ARGS__)
+#define xrBeginFrame(...) XrCall("xrBeginFrame", xrBeginFrame, __VA_ARGS__)
+#define xrEndFrame(...) XrCall("xrEndFrame", xrEndFrame, __VA_ARGS__)
+#define xrLocateViews(...) XrCall("xrLocateViews", xrLocateViews, __VA_ARGS__)
+#define xrEnumerateViewConfigurationViews(...) XrCall("xrEnumerateViewConfigurationViews", xrEnumerateViewConfigurationViews, __VA_ARGS__)
+#define xrEnumerateSwapchainFormats(...) XrCall("xrEnumerateSwapchainFormats", xrEnumerateSwapchainFormats, __VA_ARGS__)
+#define xrCreateSwapchain(...) XrCall("xrCreateSwapchain", xrCreateSwapchain, __VA_ARGS__)
+#define xrDestroySwapchain(...) XrCall("xrDestroySwapchain", xrDestroySwapchain, __VA_ARGS__)
+#define xrEnumerateSwapchainImages(...) XrCall("xrEnumerateSwapchainImages", xrEnumerateSwapchainImages, __VA_ARGS__)
+#define xrAcquireSwapchainImage(...) XrCall("xrAcquireSwapchainImage", xrAcquireSwapchainImage, __VA_ARGS__)
+#define xrWaitSwapchainImage(...) XrCall("xrWaitSwapchainImage", xrWaitSwapchainImage, __VA_ARGS__)
+#define xrReleaseSwapchainImage(...) XrCall("xrReleaseSwapchainImage", xrReleaseSwapchainImage, __VA_ARGS__)
 static PFN_xrGetD3D11GraphicsRequirementsKHR xrGetD3D11GraphicsRequirementsKHR;
 
 static const char* R(XrResult r) {
@@ -233,7 +270,8 @@ static void PollEvents() {
     while (xrPollEvent(g_inst, &ev) == XR_SUCCESS) {
         if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             g_state = ((XrEventDataSessionStateChanged*)&ev)->state;
-            Log("xr: session state %d", (int)g_state);
+            { static const char* const sn[] = { "unknown", "idle", "ready", "synchronized", "visible", "focused", "stopping", "loss pending", "exiting" };
+              Log("xr: session state %d (%s)", (int)g_state, (int)g_state >= 0 && (int)g_state <= 8 ? sn[(int)g_state] : "?"); }
             if (g_state == XR_SESSION_STATE_READY) {
                 XrSessionBeginInfo bi = {XR_TYPE_SESSION_BEGIN_INFO};
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -245,6 +283,9 @@ static void PollEvents() {
                 g_running = false; g_frameBegun = false;
             }
         }
+        else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) { Log("xr: the runtime announced it is about to go away (instance loss pending)"); LogFlush(); }
+        else if (ev.type == XR_TYPE_EVENT_DATA_EVENTS_LOST) Log("xr: the runtime dropped %u events", ((XrEventDataEventsLost*)&ev)->lostEventCount);
+        else if (ev.type != XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING && ev.type != XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) LOG_FIRST(10, "xr: event type %d", (int)ev.type);
         ev = {XR_TYPE_EVENT_DATA_BUFFER};
     }
 }
@@ -264,6 +305,7 @@ static void BeginNextFrame() {
     // frames, which were then rendered without the headset pose (the "two points" flicker / judder)
     XrFrameState fs = {XR_TYPE_FRAME_STATE};
     LARGE_INTEGER a, b; QueryPerformanceCounter(&a);
+    g_xrRenderTid = GetCurrentThreadId();
     XrResult wr = xrWaitFrame(g_sess, &wi, &fs);
     if (XR_SUCCEEDED(wr)) { g_fs = fs; g_predPeriod = fs.predictedDisplayPeriod; g_predTime = fs.predictedDisplayTime; }
     QueryPerformanceCounter(&b); if (!g_qpf.QuadPart) QueryPerformanceFrequency(&g_qpf);
@@ -345,7 +387,7 @@ void EyeCapGrab(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src);
 void XrSubmitEye(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src) {
     if (g_failed || eye < 0 || eye > 1 || !src) return;
     if (!g_inst) {
-        ctx->GetDevice(&g_dev); g_ctx = ctx; g_ctx->AddRef();
+        ctx->GetDevice(&g_dev); g_ctx = ctx; g_ctx->AddRef(); DiagSetDevice(g_dev);
         if (!LoadRuntime() || !CreateInstance()) { g_failed = true; Log("xr: OpenXR disabled for this run"); return; }
     }
     if (!g_sess) {
