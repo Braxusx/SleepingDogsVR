@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.6
+
+- **Fix for a crash inside the graphics driver**, reported with Virtual Desktop in VDXR mode (the game closing during play,
+  sometimes within the first minute). The mod's graphics hooks also ran for drawing done by other components inside the game
+  process, such as the VR runtime's own thread, and treated it as the game's. They now act only on the game's own drawing on
+  the game's render thread. This may also be the cause of rare mid-game crashes on other set-ups.
+- The crash diagnostics of 0.8.5 stay in (state file, previous run kept, freeze and exit records). The log now also names any
+  other component whose drawing passes through the hooks.
+- Mod build 143.
+
+**Reporting a crash:** About > Collect logs in the launcher, and send the zip.
+
 ## 0.8.5 - diagnostic build
 
 Plays the same as 0.8.4. This release adds diagnostics for crashes and freezes that leave nothing in the log (reported with
