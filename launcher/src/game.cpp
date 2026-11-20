@@ -408,7 +408,7 @@ Report Uninstall(const Game& g, bool deleteIni) {
     if (s.installed || Exists(Join(g.root, kRecord))) { if (!del(L"dinput8.dll")) return r; }
     else if (Exists(Join(g.root, L"dinput8.dll"))) Add(r, '!', "dinput8.dll belongs to another mod and was left in place");
     for (const auto& f : kFiles) if (f.id != IDR_DINPUT8 && !del(f.rel)) return r;
-    for (const wchar_t* f : { L"sdvr.log", L"SPatch.log", L"sdvr_state.txt", L"sdvr_previous.log", L"sdvr_previous_state.txt" }) if (!del(f)) return r;
+    for (const wchar_t* f : { L"sdvr.log", L"SPatch.log", L"sdvr_state.txt", L"sdvr_previous.log", L"sdvr_previous_state.txt", L"sdvr_check_eye0.bmp", L"sdvr_check_eye1.bmp", L"sdvr_check_hud.bmp", L"sdvr_check_hud_alpha.bmp" }) if (!del(f)) return r;
     RemoveDirectoryW(Join(g.root, L"sdvr_licenses").c_str());   // only if empty
     Add(r, '+', "Mod files removed");
     if (s.backupPresent) {
@@ -517,6 +517,7 @@ std::wstring CollectLogs(const Game& g, std::string& err) {
     auto addFile = [&](const std::wstring& path, const std::string& nm) { std::string d; if (ReadFileAll(path, d)) z.Add(nm, d.data(), d.size()); };
     if (g.valid) {
         for (const wchar_t* f : { L"sdvr.log", L"sdvr_state.txt", L"sdvr_previous.log", L"sdvr_previous_state.txt", L"sdvr.ini", L"sdvr_install.txt", L"SPatch.log", L"SPatch.ini" }) addFile(Join(g.root, f), Narrow(f));
+        for (const wchar_t* f : { L"sdvr_check_eye0.bmp", L"sdvr_check_eye1.bmp", L"sdvr_check_hud.bmp", L"sdvr_check_hud_alpha.bmp" }) addFile(Join(g.root, f), Narrow(f));   // 0.8.7: picture check
         addFile(GameConfigPath(g), "DisplaySettings.xml");
     }
     addFile(Join(PrefsDir(), L"launcher.log"), "launcher.log");

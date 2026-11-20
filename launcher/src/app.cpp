@@ -611,10 +611,19 @@ static void PageAboutDraw() {
     theme::SectionTitle("NEED HELP?");
     theme::BeginCard("help");
     theme::Wrapped("If the game crashes or something doesn't look right, collect the logs and send the zip with your report. It gathers the mod's log, settings and a short system summary (Windows, CPU, GPU, VR runtime) into one zip on your desktop. Nothing is uploaded.", theme::Muted());
+    theme::Wrapped("For a picture problem (double vision, the eyes not matching, something odd on the HUD): press Record a picture check, start the game and play for at least 20 seconds, then collect the logs. The mod saves one small picture of each eye and of the HUD panel, once.", theme::Muted());
     if (theme::Button("Collect logs", true)) {
         std::string err; std::wstring z = CollectLogs(g_app.game, err);
         if (!z.empty()) { Notice("Saved to your desktop: " + Narrow(z.substr(z.find_last_of(L'\\') + 1)), theme::Good()); std::wstring arg = L"/select,\"" + z + L"\""; ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL); }
         else Notice(err, theme::Bad());
+    }
+    if (Installed()) {   // 0.8.7: picture check - the mod saves both eye pictures and the HUD picture once, 12 s into play
+        ImGui::SameLine();
+        bool armed = IniGet(g_app.game, L"EyeCheck", L"0") != L"0";
+        if (theme::Button(armed ? "Picture check is set for the next start" : "Record a picture check")) {
+            IniSet(g_app.game, L"EyeCheck", armed ? L"0" : L"1");
+            Notice(armed ? "Picture check cancelled." : "Set. Start the game and play for at least 20 seconds, then come back and press Collect logs.", theme::Good());
+        }
     }
     ImGui::SameLine(); if (theme::Button("Open launcher log")) { std::wstring p = PrefsDir() + L"\\launcher.log"; ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
     if (Installed()) { ImGui::SameLine(); if (theme::Button("Open sdvr.ini")) ShellExecuteW(nullptr, L"open", IniPath(g_app.game).c_str(), nullptr, nullptr, SW_SHOWNORMAL); }

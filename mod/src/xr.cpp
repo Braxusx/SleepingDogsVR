@@ -24,6 +24,7 @@ static XrInstance g_inst;
 static XrSystemId g_sys;
 static XrSession g_sess;
 static XrSpace g_space;
+static volatile bool g_repWant = true;      // 144, view report: set at each session begin and by XrViewReportNow
 static XrSessionState g_state = XR_SESSION_STATE_UNKNOWN;
 static bool g_running, g_failed, g_frameBegun, g_copied[2];
 static XrFrameState g_fs = {XR_TYPE_FRAME_STATE};
@@ -276,6 +277,7 @@ static void PollEvents() {
                 XrSessionBeginInfo bi = {XR_TYPE_SESSION_BEGIN_INFO};
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                 XrResult r = xrBeginSession(g_sess, &bi);
+                g_repWant = true;   // 144: a view report for each start of the session
                 g_running = XR_SUCCEEDED(r);
                 Log("xr: xrBeginSession -> %s", R(r));
             } else if (g_state == XR_SESSION_STATE_STOPPING) {
@@ -350,6 +352,47 @@ void XrHudSet(float dist, float width) {
     if (width >= 0.3f && width <= 10.f) g_hudWidth = width;
     if (dist >= 0.3f && dist <= 10.f && dist != g_hudDist) { g_hudDist = dist; XrSetHudAnchor(g_ancHead[0], g_ancHead[1], g_ancHead[2], g_ancYaw); }   // 092: the fixed panel moves at once
 }
+// build 144: the view report. Written to the log when tracking starts, each time the session starts again, when the
+// headset's eye spacing or field of view changes and with every picture check: what the runtime says about the two eyes,
+// what the game drew for them, and (with the next presented frame) what was handed to the headset. For reports of
+// double vision, wrong scale or eyes that do not match, from runtimes that cannot be tested here.
+static volatile LONG g_repSubmit = 0;       // report number still to be completed by the submit side
+static int g_repN = 0; static float g_repIpd = -1.f, g_repFov[8];
+static float Deg(float r) { return r * 57.29578f; }
+void XrViewReportNow() { g_repWant = true; }
+bool XrViewReport(const XrView raw[2], const XrView drawn[2], float worldScale, int symFov, int menu) {   // game thread, first eye pass
+    if (g_repN >= 24) return false;
+    float d[3] = { raw[1].pose.position.x - raw[0].pose.position.x, raw[1].pose.position.y - raw[0].pose.position.y, raw[1].pose.position.z - raw[0].pose.position.z };
+    float ipd = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    float f[8]; for (int e = 0; e < 2; e++) { f[e * 4 + 0] = raw[e].fov.angleLeft; f[e * 4 + 1] = raw[e].fov.angleRight; f[e * 4 + 2] = raw[e].fov.angleUp; f[e * 4 + 3] = raw[e].fov.angleDown; }
+    const char* why = nullptr;
+    if (g_repWant) why = g_repN ? "asked for, or the headset session started again" : "first tracked frame";
+    else if (fabsf(ipd - g_repIpd) > 0.0005f) why = "the eye spacing changed";
+    else for (int i = 0; i < 8; i++) if (fabsf(f[i] - g_repFov[i]) > 0.005f) { why = "the field of view changed"; break; }
+    if (!why) return false;
+    g_repWant = false; g_repIpd = ipd; memcpy(g_repFov, f, sizeof f); g_repN++;
+    // how the right eye's direction differs from the left eye's: conj(q0) * q1 (small angles: 2 x the vector part)
+    const XrQuaternionf& a = raw[0].pose.orientation; const XrQuaternionf& b = raw[1].pose.orientation;
+    float rw = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+    float rx = a.w * b.x - a.x * b.w - a.y * b.z + a.z * b.y;
+    float ry = a.w * b.y + a.x * b.z - a.y * b.w - a.z * b.x;
+    float rz = a.w * b.z - a.x * b.y + a.y * b.x - a.z * b.w;
+    float ang = 2.f * acosf(fminf(1.f, fabsf(rw)));
+    // the left-to-right eye vector in the left eye's own axes: v' = v + 2 u x (u x v + w v), u = -(x, y, z)
+    float u[3] = { -a.x, -a.y, -a.z };
+    float c1[3] = { u[1] * d[2] - u[2] * d[1] + a.w * d[0], u[2] * d[0] - u[0] * d[2] + a.w * d[1], u[0] * d[1] - u[1] * d[0] + a.w * d[2] };
+    float lv[3] = { d[0] + 2.f * (u[1] * c1[2] - u[2] * c1[1]), d[1] + 2.f * (u[2] * c1[0] - u[0] * c1[2]), d[2] + 2.f * (u[0] * c1[1] - u[1] * c1[0]) };
+    Log("view report %d (%s):", g_repN, why);
+    Log("  from the headset's runtime: eye spacing %.1f mm; right eye seen from the left eye: %.1f mm to the right, %.1f mm up, %.1f mm back; the two eyes' directions differ by %.2f deg (turn %.2f, tilt %.2f, roll %.2f)",
+        ipd * 1000.f, lv[0] * 1000.f, lv[1] * 1000.f, lv[2] * 1000.f, Deg(ang), Deg(2.f * ry), Deg(2.f * rx), Deg(2.f * rz));
+    for (int e = 0; e < 2; e++)
+        Log("  eye %d (%s): runtime's field of view left %.1f right %.1f up %.1f down %.1f deg; drawn with left %.1f right %.1f up %.1f down %.1f deg%s",
+            e, e ? "right" : "left", Deg(f[e * 4]), Deg(f[e * 4 + 1]), Deg(f[e * 4 + 2]), Deg(f[e * 4 + 3]),
+            Deg(drawn[e].fov.angleLeft), Deg(drawn[e].fov.angleRight), Deg(drawn[e].fov.angleUp), Deg(drawn[e].fov.angleDown), symFov ? " (made symmetric)" : "");
+    Log("  eye pictures %ux%u, world scale factor %.3f, %s, frame period %.2f ms", g_w, g_h, worldScale, menu ? "a menu screen is showing (flat picture)" : "in the game world", (float)g_predPeriod / 1e6f);
+    InterlockedExchange(&g_repSubmit, g_repN);
+    return true;
+}
 long XrSetFrameViews(const XrView v[2]) {   // game thread: the views this frame was rendered with; returns its sequence number
     LONG n = InterlockedIncrement(&g_ringN);
     g_ring[n & 7][0] = v[0]; g_ring[n & 7][1] = v[1]; g_ringMenu[n & 7] = g_nextMenu; g_ringSeq[n & 7] = n; g_ringOk[n & 7] = true;
@@ -384,6 +427,7 @@ bool XrActive() { return g_running && g_frameBegun; }
 // called from Compose (render thread) with each eye image
 void OsdBlit(ID3D11DeviceContext* ctx, ID3D11Texture2D* dst, UINT ew, UINT eh);
 void EyeCapGrab(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src);
+void EyeCheckGrab(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src, bool menu);
 void XrSubmitEye(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src) {
     if (g_failed || eye < 0 || eye > 1 || !src) return;
     if (!g_inst) {
@@ -414,6 +458,7 @@ void XrSubmitEye(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src) {
     D3D11_BOX box = {0, 0, 0, g_w, g_h, 1};
     g_ctx->CopySubresourceRegion(g_img[eye][idx], 0, 0, 0, 0, src, 0, &box);
     EyeCapGrab(eye, g_ctx, src);                 // build 013: F10 eye capture (before the label)
+    { LONG ps = g_presentSeq; EyeCheckGrab(eye, g_ctx, src, ps > 0 && g_ringSeq[ps & 7] == ps && g_ringMenu[ps & 7]); }   // 144: picture check
     OsdBlit(g_ctx, g_img[eye][idx], g_w, g_h);   // build 011: mode label
     XrSwapchainImageReleaseInfo ri = {XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     xrReleaseSwapchainImage(g_swc[eye], &ri);
@@ -523,6 +568,25 @@ void XrAfterPresent() {
         bool both = g_copied[0] && g_copied[1];
         ei.layerCount = both && g_fs.shouldRender ? nl : 0;
         ei.layers = layers;
+        {   // 144: what goes to the headset - counts for the log, and the second half of a view report
+            static long cScene, cMenu, cHud, cNone, cUntracked, cTotal;
+            cTotal++; if (!ei.layerCount) cNone++; else { if (menu) cMenu++; else cScene++; if (hud) cHud++; } if (!tracked) cUntracked++;
+            if (cTotal % 3600 == 0) Log("xr: of the last 3600 frames handed over: world in stereo %ld, menu screen %ld, with the HUD panel %ld, nothing shown %ld, without a matched head pose %ld",
+                                        cScene, cMenu, cHud, cNone, cUntracked), cScene = cMenu = cHud = cNone = cUntracked = 0;
+            if (g_repSubmit && tracked && ei.layerCount) {
+                LONG rp = InterlockedExchange(&g_repSubmit, 0);
+                Log("view report %ld, handed to the headset with frame %lld:", rp, g_frame);
+                if (menu) Log("  a flat menu screen %.2f m wide, %.2f m away, the same picture for both eyes (no stereo)", bg.size.width, g_bgDist);
+                else for (int e = 0; e < 2; e++)
+                    Log("  eye %d: picture %dx%d of a %ux%u image, field of view left %.1f right %.1f up %.1f down %.1f deg, head pose = the one it was drawn with (position %.3f %.3f %.3f)", e,
+                        pv[e].subImage.imageRect.extent.width, pv[e].subImage.imageRect.extent.height, g_w, g_h,
+                        Deg(pv[e].fov.angleLeft), Deg(pv[e].fov.angleRight), Deg(pv[e].fov.angleUp), Deg(pv[e].fov.angleDown), pv[e].pose.position.x, pv[e].pose.position.y, pv[e].pose.position.z);
+                if (hud) Log("  HUD panel: %.2f x %.2f m at %.2f %.2f %.2f, %s, same picture for both eyes", quad.size.width, quad.size.height, quad.pose.position.x, quad.pose.position.y, quad.pose.position.z,
+                             g_hudWorld ? "fixed in the room" : "moves with the head");
+                else Log("  no HUD panel in this frame");
+                Log("  pose matched by frame number: %s (so far %ld matched, %ld not)", g_ringSeq[slot] == g_presentSeq ? "yes" : "no", g_seqHits, g_seqMiss);
+            }
+        }
         if (g_tcap >= 0 && g_tcap < 300) {
             LARGE_INTEGER t; QueryPerformanceCounter(&t); if (!g_qpf.QuadPart) QueryPerformanceFrequency(&g_qpf);
             TimeRec& r = g_trec[g_tcap];

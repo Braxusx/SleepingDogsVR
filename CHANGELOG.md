@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.7
+
+Plays the same as 0.8.6. This release adds diagnostics for picture problems (double vision, the two eyes not matching,
+something stray on the HUD panel), which leave nothing in the log.
+
+- **View report in the log.** When tracking starts, each time the headset session starts again, and when the headset's eye
+  spacing or field of view changes, the log records what the VR runtime reports for the two eyes (spacing, direction, field
+  of view), what the game drew for them, and what was handed to the headset (eye pictures, HUD panel, menu screen).
+- **Picture check.** About > *Record a picture check* in the launcher, then play for at least 20 seconds. The mod saves one
+  small picture of each eye and of the HUD panel, once (`sdvr_check_*.bmp` in the game folder). *Collect logs* gathers them.
+- The log also counts what was handed to the headset over time: stereo world, menu screen, HUD panel, frames without a
+  matched head pose.
+- Mod build 144.
+
+**Reporting a picture problem:** About > Record a picture check, play 20 seconds, About > Collect logs, and send the zip.
+Please also say what is doubled (everything, only near things, only the HUD or menus, only moving things), and whether it
+looks right with one eye closed.
+
 ## 0.8.6
 
 - **Fix for a crash inside the graphics driver**, reported with Virtual Desktop in VDXR mode (the game closing during play,

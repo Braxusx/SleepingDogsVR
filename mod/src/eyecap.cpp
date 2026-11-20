@@ -41,7 +41,7 @@ static void SaveTag(const wchar_t* tag, ID3D11DeviceContext* ctx, ID3D11Texture2
         }
     }
     ctx->Unmap(st, 0); st->Release();
-    wchar_t path[MAX_PATH]; if (!wcsncmp(tag, L"lburst", 6)) swprintf(path, MAX_PATH, L"%ls\\sdvr_%ls.bmp", g_dir, tag); else swprintf(path, MAX_PATH, L"%ls\\sdvr_cap%02d_%ls.bmp", g_dir, g_n, tag);
+    wchar_t path[MAX_PATH]; if (!wcsncmp(tag, L"lburst", 6) || !wcsncmp(tag, L"check", 5)) swprintf(path, MAX_PATH, L"%ls\\sdvr_%ls.bmp", g_dir, tag); else swprintf(path, MAX_PATH, L"%ls\\sdvr_cap%02d_%ls.bmp", g_dir, g_n, tag);
     FILE* f = _wfopen(path, L"wb");
     if (f) {
         BITMAPFILEHEADER fh = {}; BITMAPINFOHEADER ih = {};
@@ -84,4 +84,37 @@ void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex) {
     swprintf(t, 32, L"hud%d", g_hudSaved); SaveTag(t, ctx, tex, false);
     swprintf(t, 32, L"hud%d_alpha", g_hudSaved); SaveTag(t, ctx, tex, true);
     if (++g_hudSaved >= 2) g_hudArm = false;
+}
+
+// build 144: picture check. Asked for with EyeCheck=1 in sdvr.ini (the launcher's "Record a picture check" button). After
+// 12 seconds of uninterrupted play (no menu screen) the two eye pictures of one frame and the HUD panel's picture are saved
+// at quarter size as sdvr_check_eye0.bmp (left), sdvr_check_eye1.bmp (right), sdvr_check_hud.bmp and sdvr_check_hud_alpha.bmp
+// next to the game exe; the launcher's log collection picks them up. These are the pictures as handed to the headset, so
+// they show whether the two eyes match and whether anything stray is on the HUD panel.
+static volatile LONG g_chkArm = 0, g_chkDone = 0; static DWORD g_chkPlay0 = 0, g_chkEyesAt = 0; static int g_chkStage = 0;   // 1 = eye 0 saved, 2 = both
+void XrViewReportNow();
+void EyeCheckArm() { g_chkStage = 0; g_chkPlay0 = 0; InterlockedExchange(&g_chkArm, 1); }
+bool EyeCheckDone() { return InterlockedExchange(&g_chkDone, 0) != 0; }
+void EyeCheckGrab(int eye, ID3D11DeviceContext* ctx, ID3D11Texture2D* src, bool menu) {
+    if (!g_chkArm) return;
+    if (g_chkStage == 2) {   // eyes saved: the HUD picture follows when the HUD is drawn; without one, finish after 2 s
+        if (GetTickCount() - g_chkEyesAt > 2000) { Log("picture check: no HUD picture came (HUD panel off or hidden) - done without it"); g_chkArm = 0; InterlockedExchange(&g_chkDone, 1); }
+        return;
+    }
+    if (menu) { g_chkPlay0 = 0; g_chkStage = 0; return; }
+    DWORD now = GetTickCount();
+    if (!g_chkPlay0) g_chkPlay0 = now ? now : 1;
+    if (now - g_chkPlay0 < 12000) return;
+    if (g_chkStage == 0 && eye != 0) return;   // both eyes from the same frame: start with the first
+    SaveTag(eye ? L"check_eye1" : L"check_eye0", ctx, src, false, 4);
+    if (eye == 0) { g_chkStage = 1; return; }
+    g_chkStage = 2; g_chkEyesAt = now;
+    Log("picture check: both eye pictures saved (sdvr_check_eye0.bmp = left, sdvr_check_eye1.bmp = right, quarter size)");
+    XrViewReportNow();
+}
+void EyeCheckHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex) {
+    if (!g_chkArm || g_chkStage != 2 || !tex) return;
+    SaveTag(L"check_hud", ctx, tex, false, 4); SaveTag(L"check_hud_alpha", ctx, tex, true, 4);
+    Log("picture check: HUD panel picture saved (sdvr_check_hud.bmp, and its coverage sdvr_check_hud_alpha.bmp)");
+    g_chkArm = 0; InterlockedExchange(&g_chkDone, 1);
 }

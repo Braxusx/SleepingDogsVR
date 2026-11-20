@@ -21,10 +21,11 @@
 void OsdRequest(const char* text, int seconds);
 void XrHudSubmit(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex); void RtDiagInstall(ID3D11DeviceContext* ctx); void RtDiagSetEyes(ID3D11Resource* a, ID3D11Resource* b); void RtDiagArm(bool on); void RtDiagNewFrame(); void RtMinimapArm(ID3D11RenderTargetView* hud); void RtSetHudRtv(ID3D11RenderTargetView* v, int glowFix); LONG RtGlowFixCount(); void RtMinimapFitViewport(D3D11_VIEWPORT* v); void RtSceneryFixStats(char* b, int n); extern volatile int g_sceneryFix; void RtDumpInit(const wchar_t* dir); void RtDumpArm(); void RtDumpFrame(); void ShaderInfoInstall(); int ShaderCount(); void RtQueryTest(int on); void RtQueryStats(char* b, int n); void RtQueryInstall(ID3D11DeviceContext* ctx); int RtSkipNext(char* label, int n); void RtMinimapFit(int on); void RtOutlineTrace(bool on); LONG RtMinimapRedirects(); void RtMinimapSetup(void (*flush)(), float aspect); void RtOutlineMark(const char* m); void RtOutlineArm(); void RtOutlineFrame(); void RtOutlineInstall(ID3D11DeviceContext* ctx); void XrTimingCapture(); void RtUiRedirect(ID3D11RenderTargetView* hud); LONG RtUiRedirectCount(); void XrSetMenuMode(bool m); float XrMenuTan(); void XrSetHudLock(int world); void XrSetHudAnchor(float x, float y, float z, float yaw);
 void HalDiagInstall(volatile bool* inEyeFlag); void HalDiagReport(long long frames);
+void EyeCheckArm(); bool EyeCheckDone(); void EyeCheckHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex); bool XrViewReport(const XrView raw[2], const XrView drawn[2], float worldScale, int symFov, int menu);
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
 #include "crumb.h"
-#define SDVR_BUILD "143"
+#define SDVR_BUILD "144"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -532,12 +533,20 @@ static void hkEyeFrameInner(float a, int eye) {
                 if (g_autoRecenter && step < 3 && now - t0 >= kAt[step]) { step++; g_recenterReq = true; Log("automatic recentre %d of 3 (%.0f s after the first tracked frame)", step, (double)(now - t0) / 1000.0); }
             }
             if (g_recenterReq) { g_recenterReq = false; Recenter(views); }
+            XrView rawViews[2]; memcpy(rawViews, views, sizeof rawViews);   // 144: as the runtime gave them, for the view report
             if (g_symFov) for (int e = 0; e < 2; e++) {   // build 012: symmetric frustum per eye, covering the eye's own FOV
                 XrFovf& f = views[e].fov;
                 float mx = fmaxf(fabsf(tanf(f.angleLeft)), fabsf(tanf(f.angleRight))), my = fmaxf(fabsf(tanf(f.angleUp)), fabsf(tanf(f.angleDown)));
                 f.angleLeft = -atanf(mx); f.angleRight = atanf(mx); f.angleUp = atanf(my); f.angleDown = -atanf(my);
             }
             XrSetMenuMode(g_menuMode && (g_menuLevel > 0 || g_frontEnd));
+            if (XrViewReport(rawViews, views, g_worldScale, g_symFov, g_menuMode && (g_menuLevel > 0 || g_frontEnd))) {   // 144
+                float E0[16], E1[16]; EyeInCamera(views[0], views[1], E0); EyeInCamera(views[1], views[0], E1);
+                Log("  the game's two cameras: left %.1f %.1f %.1f mm, right %.1f %.1f %.1f mm from the game camera (right, up, back) = %.1f mm apart; head tracking %d, leaning %d, first person %d, game's own 3D separation %.4f (not used)",
+                    E0[12] * 1000.f, E0[13] * 1000.f, E0[14] * 1000.f, E1[12] * 1000.f, E1[13] * 1000.f, E1[14] * 1000.f,
+                    sqrtf((E1[12] - E0[12]) * (E1[12] - E0[12]) + (E1[13] - E0[13]) * (E1[13] - E0[13]) + (E1[14] - E0[14]) * (E1[14] - E0[14])) * 1000.f,
+                    (int)g_track, (int)g_positional, (int)g_fp, g_lastSep);
+            }
             g_curSeq = XrSetFrameViews(views);   // the runtime gets the same FOV the eye is rendered with
             memcpy(g_lastViews, views, sizeof views); g_haveLast = true;
         }
@@ -739,6 +748,7 @@ static void HudFlush() {   // render thread: give the finished HUD texture (UI +
     RtMinimapArm(nullptr);
     ID3D11DeviceContext* ctx = g_immCtx; if (!ctx || !g_hudTex) return;
     EyeCapHud(ctx, g_hudTex);
+    EyeCheckHud(ctx, g_hudTex);   // 144: picture check
     XrHudSubmit(ctx, g_hudTex);
 }
 // build 038: the minimap MAP is drawn by 9 draws straight after the eye copy (no new render target bound - the eye
@@ -1261,6 +1271,7 @@ static DWORD WINAPI KeyThread(LPVOID) {
         static bool p2 = false; if (g_dev && k2 && !p2) { g_nisSmooth = !g_nisSmooth; Log("cutscene smoothing %s (F2)", g_nisSmooth ? "on" : "off"); OsdRequest(g_nisSmooth ? "CUTSCENE SMOOTHING ON" : "CUTSCENE SMOOTHING OFF", 3); } p2 = k2;
         bool k3 = (GetAsyncKeyState(VK_F3) & 0x8000) != 0;
         static bool p3 = false; if (g_dev && k3 && !p3) { g_swapOrder = !g_swapOrder; Log("eye order %d (F3)", g_swapOrder); OsdRequest(g_swapOrder ? "EYE ORDER: RIGHT EYE RENDERED FIRST" : "EYE ORDER: LEFT EYE RENDERED FIRST", 4); } p3 = k3;
+        if (EyeCheckDone()) { IniInt(L"EyeCheck", 0); Log("picture check done; EyeCheck set back to 0 in sdvr.ini"); OsdRequest("PICTURE CHECK SAVED", 3); }   // 144
         bool k11 = (GetAsyncKeyState(VK_F11) & 0x8000) != 0;
         static bool p11 = false; if (k11 && !p11) { HudModeSet((g_hudSt + 1) % 3); IniInt(L"HudMode", g_hudSt); Log("%s (F11)", kHudName[g_hudSt]); OsdRequest(kHudName[g_hudSt], 3); } p11 = k11;
         bool k10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
@@ -1308,6 +1319,7 @@ static void Init() {
     wchar_t lp[MAX_PATH]; swprintf(lp, MAX_PATH, L"%ls\\sdvr.log", g_dir); LogInit(lp);
     swprintf(g_ini, MAX_PATH, L"%ls\\sdvr.ini", g_dir);
     EyeCapInit(g_dir); RtDumpInit(g_dir);
+    if (GetPrivateProfileIntW(L"VR", L"EyeCheck", 0, g_ini)) { EyeCheckArm(); Log("picture check asked for (EyeCheck=1): both eye pictures and the HUD picture are saved once, after 12 seconds of play"); }   // 144
     g_base = (uintptr_t)GetModuleHandleW(nullptr);
     { MODULEINFO mi = {}; GetModuleInformation(GetCurrentProcess(), (HMODULE)g_base, &mi, sizeof mi); g_imgEnd = g_base + mi.SizeOfImage; }
     char exe[MAX_PATH]; GetModuleFileNameA(nullptr, exe, MAX_PATH);

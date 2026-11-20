@@ -33,6 +33,11 @@ TimerFix=1
 ; AutoRecenter=1: the view is recentred automatically during the first seconds after the game starts.
 AutoRecenter=1
 
+; EyeCheck=1: picture check for reporting a picture problem (double vision, eyes that do not match). Once, after 12 seconds
+; of play, the mod saves a small picture of each eye and of the HUD panel next to the game (sdvr_check_*.bmp) and sets
+; this back to 0. The launcher's "Record a picture check" button sets it, and "Collect logs" gathers the pictures.
+EyeCheck=0
+
 ; Gamepad shortcuts (XInput pads). Each is one or two buttons held together for PadHoldMs milliseconds.
 ; They are easiest to set in game: Insert > GAMEPAD SHORTCUTS, choose a line, press Right, then press the button you want.
 ; Button names: A B X Y LB RB LT RT START BACK, DPAD UP / DOWN / LEFT / RIGHT, LEFT STICK CLICK, RIGHT STICK CLICK, NONE.
