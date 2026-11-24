@@ -25,7 +25,7 @@ void EyeCheckArm(); bool EyeCheckDone(); void EyeCheckHud(ID3D11DeviceContext* c
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
 #include "crumb.h"
-#define SDVR_BUILD "144"
+#define SDVR_BUILD "145"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -1352,6 +1352,7 @@ static void Init() {
     { wchar_t b[32]; GetPrivateProfileStringW(L"VR", L"ShadowScale", L"1.0", b, 32, g_ini); float v = (float)_wtof(b); if (v >= 0.5f && v <= 4.f) g_shadowScale = v; }
     { wchar_t b[32]; GetPrivateProfileStringW(L"VR", L"CullScale", L"1.25", b, 32, g_ini); g_cullScale = (float)_wtof(b); if (g_cullScale < 0.5f) g_cullScale = 1.25f; }
     g_symFov = GetPrivateProfileIntW(L"VR", L"SymFov", 1, g_ini);
+    { extern int g_xrSubmitFov; g_xrSubmitFov = GetPrivateProfileIntW(L"VR", L"SubmitFov", 0, g_ini); if (g_xrSubmitFov < 0 || g_xrSubmitFov > 2) g_xrSubmitFov = 0; }   // 145
     g_nisSmooth = GetPrivateProfileIntW(L"VR", L"CutsceneSmooth", 1, g_ini);
     Log("settings: SymFov %d, ShadowFix %d, CullFix %d (world matrix kept %d, restore %d), CullScale %.2f, CutsceneSmooth %d, MinimapFix %d", g_symFov, g_shadowFix, g_cullFix, (int)g_cullKeepInv, (int)g_cullRestore, g_cullScale, (int)g_nisSmooth, g_minimapFix);
     XrConfigure(g_ini);

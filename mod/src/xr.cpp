@@ -43,6 +43,14 @@ static float g_testFovV = 55.f;   // build 005: head-locked test FOV (TrackHead=
 // build 006: the game thread renders each eye with the views located for its frame; the render thread submits the
 // views of the frame it is presenting (PoseDelay game frames behind the newest)
 static XrView g_ring[8][2]; static volatile LONG g_ringN = 0; static int g_poseDelay = 1; static volatile bool g_ringOk[8];
+// 145: how the eye pictures are described to the headset. The eyes are drawn with a symmetric field of view that contains
+// the headset's own lopsided one (SymFov). Up to 144 the whole picture was handed over with that symmetric field of view.
+// Virtual Desktop and SteamVR show that correctly; Meta's own runtime (Quest Link) shows the world doubled. With cropping,
+// only the part of each picture that lies inside the headset's own field of view is handed over, described with exactly
+// the angles the runtime asked for - the form every runtime is built around.
+// SubmitFov in sdvr.ini: 0 = automatic (crop on Meta's runtime, whole picture elsewhere), 1 = always crop, 2 = never.
+int g_xrSubmitFov = 0;
+static bool g_rtIsOculus = false; static XrFovf g_rawFov[2]; static volatile bool g_rawFovOk = false; static bool g_cropLogged = false;
 static long long g_frame;
 // build 021: HUD quad layer (Scaleform UI rendered into its own image, shown on a head-locked panel)
 static XrSpace g_viewSpace;
@@ -204,6 +212,9 @@ static bool CreateInstance() {
     XrInstanceProperties ip = {XR_TYPE_INSTANCE_PROPERTIES};
     xrGetInstanceProperties(g_inst, &ip);
     Log("xr: instance from runtime '%s' %u.%u.%u", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion), XR_VERSION_PATCH(ip.runtimeVersion));
+    g_rtIsOculus = strstr(ip.runtimeName, "Oculus") != nullptr || strstr(ip.runtimeName, "Meta") != nullptr;   // 145
+    Log("xr: eye pictures are handed over %s (SubmitFov=%d: 0 automatic, 1 cropped to the headset's own field of view, 2 whole)",
+        (g_xrSubmitFov == 1 || (g_xrSubmitFov == 0 && g_rtIsOculus)) ? "cropped to the headset's own field of view" : "whole, with the field of view they were drawn with", g_xrSubmitFov);
     return true;
 }
 
@@ -361,6 +372,7 @@ static int g_repN = 0; static float g_repIpd = -1.f, g_repFov[8];
 static float Deg(float r) { return r * 57.29578f; }
 void XrViewReportNow() { g_repWant = true; }
 bool XrViewReport(const XrView raw[2], const XrView drawn[2], float worldScale, int symFov, int menu) {   // game thread, first eye pass
+    g_rawFov[0] = raw[0].fov; g_rawFov[1] = raw[1].fov; g_rawFovOk = true;   // 145: the headset's own angles, for the cropped hand-over
     if (g_repN >= 24) return false;
     float d[3] = { raw[1].pose.position.x - raw[0].pose.position.x, raw[1].pose.position.y - raw[0].pose.position.y, raw[1].pose.position.z - raw[0].pose.position.z };
     float ipd = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -515,6 +527,28 @@ void XrAfterPresent() {
             pv[e].fov = fov;
             pv[e].subImage.swapchain = g_swc[e];
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)g_w, (int32_t)g_h}};
+            if (tracked && g_rawFovOk && (g_xrSubmitFov == 1 || (g_xrSubmitFov == 0 && g_rtIsOculus))) {   // 145
+                // drawn (d) and headset (r) angles as tangents; the picture's left edge is d.left, its top edge d.up
+                const XrFovf r = g_rawFov[e];
+                float dl = tanf(fov.angleLeft), dr = tanf(fov.angleRight), du = tanf(fov.angleUp), dd = tanf(fov.angleDown);
+                float rl = tanf(r.angleLeft), rr = tanf(r.angleRight), ru = tanf(r.angleUp), rd = tanf(r.angleDown);
+                const float eps = 1e-4f;
+                if (dr - dl > 0.1f && du - dd > 0.1f && rl >= dl - eps && rr <= dr + eps && ru <= du + eps && rd >= dd - eps && rr - rl > 0.1f && ru - rd > 0.1f) {
+                    int x0 = (int)floorf((rl - dl) / (dr - dl) * (float)g_w + 0.5f), x1 = (int)floorf((rr - dl) / (dr - dl) * (float)g_w + 0.5f);
+                    int y0 = (int)floorf((du - ru) / (du - dd) * (float)g_h + 0.5f), y1 = (int)floorf((du - rd) / (du - dd) * (float)g_h + 0.5f);
+                    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > (int)g_w) x1 = (int)g_w; if (y1 > (int)g_h) y1 = (int)g_h;
+                    if (x1 - x0 >= 16 && y1 - y0 >= 16) {
+                        // the angles that belong to the whole pixels kept
+                        float sx = (dr - dl) / (float)g_w, sy = (du - dd) / (float)g_h;
+                        XrFovf c = { atanf(dl + sx * (float)x0), atanf(dl + sx * (float)x1), atanf(du - sy * (float)y0), atanf(du - sy * (float)y1) };
+                        pv[e].fov = c;
+                        pv[e].subImage.imageRect = {{x0, y0}, {x1 - x0, y1 - y0}};
+                        if (!g_cropLogged && e == 1) { g_cropLogged = true;
+                            Log("xr: cropped hand-over in use: right eye keeps %d,%d %dx%d of %ux%u, field of view left %.1f right %.1f up %.1f down %.1f deg (the left eye mirrors it)",
+                                x0, y0, x1 - x0, y1 - y0, g_w, g_h, c.angleLeft * 57.29578f, c.angleRight * 57.29578f, c.angleUp * 57.29578f, c.angleDown * 57.29578f); }
+                    }
+                }
+            }
         }
         XrCompositionLayerProjection layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         layer.space = g_space; layer.viewCount = 2; layer.views = pv;

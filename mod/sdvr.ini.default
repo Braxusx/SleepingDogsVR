@@ -12,6 +12,10 @@ RenderWidth=3072
 RenderHeight=3264
 ; 1 = symmetric eye frustum (needed for correct shadows)
 SymFov=1
+; How the eye pictures are described to the headset. 0 = automatic: on Meta's own runtime (Quest Link) only the part
+; inside the headset's own field of view is handed over; elsewhere the whole picture. 1 = always that way. 2 = never.
+; Change it only if the 3D world looks doubled while the menus look right.
+SubmitFov=0
 ; 1 = head rotation drives the view
 TrackHead=1
 ; 1 = head position (lean) drives the view
