@@ -14,7 +14,7 @@
   to the game for a few seconds.
 - **First person: cutscenes keep the game's camera.** With first person switched on, the game's own camera is used for
   as long as a cutscene plays, and first person comes back when it ends.
-- Mod build 146.
+- Mod build 147.
 
 ## 0.8.7
 

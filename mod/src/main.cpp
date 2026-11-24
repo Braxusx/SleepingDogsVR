@@ -25,7 +25,7 @@ void EyeCheckArm(); bool EyeCheckDone(); void EyeCheckHud(ID3D11DeviceContext* c
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
 #include "crumb.h"
-#define SDVR_BUILD "146"
+#define SDVR_BUILD "147"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -534,31 +534,56 @@ static void SnapUpdate(const float* game) {
     }
     tSinceSnap += dt;
     if (fabsf(rx) < 0.3f) armed = true;
-    bool flick = fabsf(rx) > 0.6f && !driving && (armed || tSinceSnap > 0.5f);   // held = one more step every half second
+    bool flick = fabsf(rx) > 0.6f && tSinceSnap > 0.12f && (armed || tSinceSnap > 0.5f);   // held = one more step every half second; a new flick may come before the camera has caught up
     if (flick) {
         float dir = (rx > 0.f ? 1.f : -1.f) * rightSign;   // which way round "right" is for this camera
-        target = WrapPi(yaw + resid + dir * step);
+        target = WrapPi((driving ? target : yaw + resid) + dir * step);
         driving = true; armed = false; tDrive = 0.f; tSinceSnap = 0.f; tRef = 0.f; errRef = fabsf(WrapPi(target - yaw)); yawAtStart = yaw;
         if (logged < 6) { logged++; Log("snap turn: %d degrees to the %s (stick %.2f; the game has read the gamepad %ld times)", deg, rx > 0.f ? "right" : "left", rx, (long)g_snapGameReads); }
     }
+    static float prevYaw = 0.f, rate = 0.f, settle = 0.f, decayTau = 0.15f; static bool crossed = false;
+    {   // how fast the game's camera is turning (rad/s), lightly smoothed
+        float r = dt > 0.0005f ? WrapPi(yaw - prevYaw) / dt : 0.f; rate = 0.5f * rate + 0.5f * r; prevYaw = yaw;
+    }
+    if (flick) { settle = 0.f; crossed = false; }
     if (driving) {
+        // 147: the game's camera follows the stick with a lag and keeps turning after the stick is let go (build 146 stopped
+        // at the first arrival and the view then drifted on by more than half a step). The view is now held on the target
+        // (delta = what is still missing, also when the camera has gone past) until the camera has ARRIVED AND STOPPED;
+        // the stick is steered on where the camera will be a fifth of a second from now, so it is let go early.
         float err = WrapPi(target - yaw); tDrive += dt; tRef += dt;
         resid = err;
-        if (fabsf(err) < 0.026f) { driving = false; }                                       // within 1.5 degrees: done
+        float startSign = WrapPi(target - yawAtStart) >= 0.f ? 1.f : -1.f;
+        if (err * startSign < 0.f) crossed = true;
+        if (fabsf(err) < 0.026f && fabsf(rate) < 0.09f) settle += dt; else settle = 0.f;      // within 1.5 degrees and under 5 degrees a second
+        if (settle > 0.08f) { driving = false; decayTau = 0.15f; }
         else if (tDrive > 0.45f && fabsf(WrapPi(yaw - yawAtStart)) < 0.035f) {              // the camera did not move at all
             driving = false; resid = 0.f; suspend = 5.f;
             static int n = 0; if (n < 4) { n++; Log("snap turn: the game's camera did not follow the stick - taken back, stick handed to the game for 5 s"); }
         }
-        else if (tDrive > 1.6f) { driving = false; }                                         // took too long: let the rest go smoothly
-        else if (tRef > 0.25f) { if (fabsf(err) > errRef + 0.035f) { driveSign = -driveSign; static int n = 0; if (n < 4) { n++; Log("snap turn: the camera turns the other way for this stick direction (inverted setting?) - drive reversed"); } } errRef = fabsf(err); tRef = 0.f; }
+        else if (tDrive > 2.0f) {                                                            // never came to rest: let the rest go gently
+            driving = false; decayTau = 0.6f;
+            static int n = 0; if (n < 6) { n++; Log("snap turn: the game's camera had not come to rest on the target after 2 s (%.1f degrees off, turning %.0f degrees a second) - let go gently", err * 57.29578f, rate * 57.29578f); }
+        }
+        else if (!crossed && tRef > 0.25f) {   // before the first arrival only: still getting further away = the stick turns the camera the other way
+            if (fabsf(err) > errRef + 0.035f) { driveSign = -driveSign; static int n = 0; if (n < 4) { n++; Log("snap turn: the camera turns the other way for this stick direction (inverted setting?) - drive reversed"); } }
+            errRef = fabsf(err); tRef = 0.f;
+        }
         if (driving) {
-            float mag = fabsf(err) / 0.21f; if (mag > 1.f) mag = 1.f; if (mag < 0.35f) mag = 0.35f;
-            // a stick push to the right turns the game's camera the "right" way round (driveSign flips it if the game is set to inverted)
-            g_snapStickOut = (err > 0.f ? 1.f : -1.f) * rightSign * (float)driveSign * mag;
+            float pred = err - rate * 0.20f;                     // what will still be missing once the turning under way has played out
+            if (fabsf(pred) < 0.035f) g_snapStickOut = 0.f;      // 2 degrees: leave it
+            else {
+                float mag = fabsf(pred) / 0.21f; if (mag > 1.f) mag = 1.f; if (mag < 0.35f) mag = 0.35f;
+                // a stick push to the right turns the game's camera the "right" way round (driveSign flips it if the game is set to inverted)
+                g_snapStickOut = (pred > 0.f ? 1.f : -1.f) * rightSign * (float)driveSign * mag;
+            }
+            static int dl = 0; if (flick && dl < 6) dl++;
+            static float worst = 0.f; if (flick) worst = 0.f; if (crossed && fabsf(err) > worst) worst = fabsf(err);
+            if (!flick && settle > 0.07f && dl <= 6) { static int n = 0; if (n < 6) { n++; Log("snap turn: camera at rest on the target after %.2f s (went past by up to %.1f degrees on the way, hidden)", tDrive, worst * 57.29578f); } }
         } else g_snapStickOut = 0.f;
     } else {
         g_snapStickOut = 0.f;
-        resid *= expf(-dt / 0.15f); if (fabsf(resid) < 0.0005f) resid = 0.f;
+        resid *= expf(-dt / decayTau); if (fabsf(resid) < 0.0005f) resid = 0.f;
     }
     g_snapOwnsStick = true;
     g_snapDelta = resid; g_snapOn = resid != 0.f; memcpy(g_snapPivot, hp, 12);
