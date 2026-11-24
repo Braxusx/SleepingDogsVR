@@ -159,6 +159,7 @@ static const Opt kQuality[] = { { "DLAA (native resolution)", L"0" }, { "Ultra Q
 static float QualityRatio(int q) { return q == 4 ? 0.77f : q == 1 ? 0.667f : q == 2 ? 0.58f : q == 3 ? 0.5f : 1.0f; }
 static const Opt kHudMode[] = { { "Fixed in front of you", L"0" }, { "Follows your head", L"1" }, { "Hidden (menus and subtitles still show)", L"2" } };
 static const Opt kMirror[] = { { "Left eye", L"0" }, { "Right eye", L"1" }, { "Alternating", L"2" } };
+static const Opt kSnap[] = { { "Off (smooth turning)", L"0" }, { "15 degrees", L"15" }, { "30 degrees", L"30" }, { "45 degrees", L"45" } };   // 0.8.8
 // Virtual Desktop's per-eye sizes for its Medium / High / Ultra / Godlike quality levels (read from the user's Quest 3, 13 Nov)
 static const struct { const char* label; int w, h; } kRender[] = { { "2112 x 2304  (Medium)", 2112, 2304 }, { "2496 x 2688  (High)", 2496, 2688 }, { "2688 x 2880  (Ultra)", 2688, 2880 }, { "3072 x 3264  (Godlike, default)", 3072, 3264 } };
 static const int kRenderN = 4;
@@ -489,7 +490,9 @@ static void PageSettingsDraw() {
     theme::SectionTitle("VIEW");
     theme::BeginCard("view");
     WorldScaleRow();
-    ToggleKey("First person view (Experimental)", "The camera sits at Wei's head instead of behind him, also in cars and on motorcycles. There to try what it feels like; cutscenes keep the game's camera.", L"FirstPerson", L"0");
+    ToggleKey("First person view (Experimental)", "The camera sits at Wei's head instead of behind him, also in cars and on motorcycles. There to try what it feels like; during cutscenes the game's own camera is used.", L"FirstPerson", L"0");
+    Gap();
+    ComboRow("Snap turning", "A flick of the right stick turns the view by a fixed step at once instead of smoothly; hold the stick for more steps. While the left trigger is held (aiming) the stick turns smoothly as usual. Works behind Wei and in first person. Also in the in-game VR menu (Insert).", L"SnapTurn", L"0", kSnap, 4, Installed());
     Gap();
     ToggleKey("Recentre automatically at start", "Recentres the view during the first seconds after the game starts, so the logos and menus are in front of you.", L"AutoRecenter", L"1");
     Gap();

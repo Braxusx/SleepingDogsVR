@@ -25,7 +25,7 @@ void EyeCheckArm(); bool EyeCheckDone(); void EyeCheckHud(ID3D11DeviceContext* c
 void EyeCapInit(const wchar_t* dir); void EyeCapBurst(); void EyeCapRequest(); void EyeCapArmHud(); void EyeCapHud(ID3D11DeviceContext* ctx, ID3D11Texture2D* tex);
 
 #include "crumb.h"
-#define SDVR_BUILD "145"
+#define SDVR_BUILD "146"
 
 static HMODULE g_self;
 static wchar_t g_dir[MAX_PATH], g_ini[MAX_PATH];
@@ -317,6 +317,7 @@ static bool g_spatchOk = false;   // set when the VR mod itself started (Enabled
 volatile int g_stateFix = 0; volatile LONG g_stateGen = 1;
 extern volatile int g_geoTest; static LONG g_sdCalls[3], g_sdPass[3], g_sdWhite[3]; static void* g_sdView[3]; static void* g_sdState[3]; static LONG g_sdFrame[3], g_sdFrameLast[3]; static LONG g_geoCalls[3], g_geoItems[3], g_fadeCalls[3][3]; static void* g_geoView[3]; static void* g_fadeView[3];   // build 063 (see hkFlush)
 static volatile int g_cullKeepInv = 0;   // build 039: CullFix 2 without touching the camera's inverse (world) matrix - F5 mode 4
+static bool SnapViewFwd(const float* in, float* out);   // 146, defined with the snap turn code
 static void CullCamera(const float* V, const float* P, float* Vc, float* Pc) {
     float E[16], E1[16], Ei[16]; EyeInCamera(g_lastViews[0], g_lastViews[1], E); EyeInCamera(g_lastViews[1], g_lastViews[0], E1);
     for (int k = 12; k < 15; k++) E[k] = 0.5f * (E[k] + E1[k]);
@@ -334,7 +335,8 @@ static void __fastcall hkSetView(float* cam, float f) {
     if (g_cullFix != 2 || g_inEye || !g_haveLast || cam != MainCamera() || *(uint8_t*)((uint8_t*)cam + 0x100)) return;
     float* V = cam + 0x40 / 4, *Vi = cam + 0x80 / 4, *P = cam + 0xC0 / 4;
     memcpy(g_gameV, V, 64); memcpy(g_gameVi, Vi, 64); memcpy(g_gameP, P, 64); g_haveGameV = true;
-    float Vc[16], Pc[16]; CullCamera(g_gameV, g_gameP, Vc, Pc);
+    float snC[16]; const float* cullBase = SnapViewFwd(g_gameV, snC) ? snC : g_gameV;   // 146: cull for the snapped direction (last frame's turn)
+    float Vc[16], Pc[16]; CullCamera(cullBase, g_gameP, Vc, Pc);
     memcpy(V, Vc, 64); if (!g_cullKeepInv) InvRigid(Vc, Vi); memcpy(P, Pc, 64); memcpy(g_cullV, Vc, 64);
     g_cullValid = true;
     LOG_FIRST(1, "cull: the game camera holds the head-turned culling camera outside the eyes (CullFix 2)");
@@ -482,9 +484,99 @@ static bool FpHeadPos(float* pos) {
     for (int k = 0; k < 3; k++) { if (!(m[12 + k] == m[12 + k]) || fabsf(m[12 + k]) > 1e6f) return false; pos[k] = m[12 + k]; }
     return true;
 }
+// 146: true while a cutscene is playing (the cutscene manager was given a scene time within the last quarter second)
+static bool CutsceneNow();
+
+// 146: SNAP TURNING (SnapTurn = 0 off / 15 / 30 / 45 degrees; VR menu "SNAP TURN").
+// A flick of the right stick turns the view by one step at once. The game's own camera cannot be turned by a set angle
+// from outside, so two things work together:
+//   - the view the mod builds is the game's camera turned about the vertical axis through the player's head by "delta".
+//     At the flick, delta jumps so the view sits exactly one step further round.
+//   - the game is then fed a right-stick deflection of the mod's own (through the XInputGetState hook) until its camera
+//     has really turned that far; delta shrinks by the same amount, so the view stays where it snapped to.
+// While snap turning is on the game does not get the player's own sideways right-stick movement, except: while the left
+// trigger is held (aiming), in menus, on the front end, in cutscenes, or when no player is near the camera.
+// If the game's camera does not answer the stick (a minigame, a scripted camera) the snap is taken back and the stick
+// is handed to the game untouched for five seconds.
+static volatile int g_snapDeg = 0;                       // 0 / 15 / 30 / 45
+static volatile float g_snapRawRx[4];                    // the player's own right stick x per pad, -1..1 (from the hook)
+static volatile bool g_snapLt = false;                   // a left trigger is held
+static volatile float g_snapStickOut = 0.f;              // what the game gets instead, -1..1
+static volatile bool g_snapOwnsStick = false;            // true = the hook replaces the game's right stick x
+static volatile LONG g_snapGameReads = 0;                // XInputGetState calls that were not the mod's own
+static float g_snapDelta = 0.f; static float g_snapPivot[3]; static bool g_snapOn = false;   // this frame's turn (game thread)
+static float WrapPi(float a) { while (a > 3.14159265f) a -= 6.2831853f; while (a < -3.14159265f) a += 6.2831853f; return a; }
+// once per game frame, from the first eye pass. game = the game's own view matrix (world -> camera, row vectors).
+static void SnapUpdate(const float* game) {
+    static LARGE_INTEGER qf, last; LARGE_INTEGER nowq; QueryPerformanceCounter(&nowq); if (!qf.QuadPart) QueryPerformanceFrequency(&qf);
+    float dt = last.QuadPart ? (float)(nowq.QuadPart - last.QuadPart) / (float)qf.QuadPart : 0.f; last = nowq; if (dt > 0.1f) dt = 0.1f;
+    static float target = 0.f, resid = 0.f, errRef = 0.f, yawAtStart = 0.f; static bool driving = false, armed = true; static int driveSign = 1;
+    static float tDrive = 0.f, tSinceSnap = 10.f, tRef = 0.f, suspend = 0.f; static int logged = 0;
+    const int deg = g_snapDeg; const float step = (float)deg * 0.01745329f;
+    float fwd[3] = { -game[2], -game[6], -game[10] }, rgt[3] = { game[0], game[4], game[8] };
+    float cp[3]; for (int k = 0; k < 3; k++) cp[k] = -(game[12] * game[k * 4 + 0] + game[13] * game[k * 4 + 1] + game[14] * game[k * 4 + 2]);
+    bool level = fwd[0] * fwd[0] + fwd[1] * fwd[1] > 0.01f;
+    float yaw = atan2f(fwd[1], fwd[0]);
+    // turning right = the forward axis turning toward the right axis; counter-clockwise-positive sign of that about world up
+    float rightSign = (fwd[0] * rgt[1] - fwd[1] * rgt[0]) >= 0.f ? 1.f : -1.f;
+    float rx = 0.f; for (int i = 0; i < 4; i++) { float v = g_snapRawRx[i]; if (fabsf(v) > fabsf(rx)) rx = v; }
+    float hp[3]; bool world = deg > 0 && level && !(g_menuMode && (g_menuLevel > 0 || g_frontEnd)) && !CutsceneNow()
+        && !(fabsf(cp[0]) < 0.5f && fabsf(cp[1]) < 0.5f && fabsf(cp[2]) < 0.5f) && FpHeadPos(hp);
+    if (world) { float d2 = 0; for (int k = 0; k < 3; k++) d2 += (hp[k] - cp[k]) * (hp[k] - cp[k]); if (d2 > 40.f * 40.f) world = false; }
+    if (suspend > 0.f) suspend -= dt;
+    bool active = world && !g_snapLt && suspend <= 0.f;
+    if (!active) {
+        // hand the stick back; whatever turn is still held is let go quickly instead of in one jump
+        driving = false; armed = fabsf(rx) < 0.3f; g_snapOwnsStick = false; g_snapStickOut = 0.f;
+        resid *= expf(-dt / 0.08f); if (fabsf(resid) < 0.0005f) resid = 0.f;
+        g_snapDelta = resid; g_snapOn = world && resid != 0.f; if (g_snapOn) memcpy(g_snapPivot, hp, 12);
+        return;
+    }
+    tSinceSnap += dt;
+    if (fabsf(rx) < 0.3f) armed = true;
+    bool flick = fabsf(rx) > 0.6f && !driving && (armed || tSinceSnap > 0.5f);   // held = one more step every half second
+    if (flick) {
+        float dir = (rx > 0.f ? 1.f : -1.f) * rightSign;   // which way round "right" is for this camera
+        target = WrapPi(yaw + resid + dir * step);
+        driving = true; armed = false; tDrive = 0.f; tSinceSnap = 0.f; tRef = 0.f; errRef = fabsf(WrapPi(target - yaw)); yawAtStart = yaw;
+        if (logged < 6) { logged++; Log("snap turn: %d degrees to the %s (stick %.2f; the game has read the gamepad %ld times)", deg, rx > 0.f ? "right" : "left", rx, (long)g_snapGameReads); }
+    }
+    if (driving) {
+        float err = WrapPi(target - yaw); tDrive += dt; tRef += dt;
+        resid = err;
+        if (fabsf(err) < 0.026f) { driving = false; }                                       // within 1.5 degrees: done
+        else if (tDrive > 0.45f && fabsf(WrapPi(yaw - yawAtStart)) < 0.035f) {              // the camera did not move at all
+            driving = false; resid = 0.f; suspend = 5.f;
+            static int n = 0; if (n < 4) { n++; Log("snap turn: the game's camera did not follow the stick - taken back, stick handed to the game for 5 s"); }
+        }
+        else if (tDrive > 1.6f) { driving = false; }                                         // took too long: let the rest go smoothly
+        else if (tRef > 0.25f) { if (fabsf(err) > errRef + 0.035f) { driveSign = -driveSign; static int n = 0; if (n < 4) { n++; Log("snap turn: the camera turns the other way for this stick direction (inverted setting?) - drive reversed"); } } errRef = fabsf(err); tRef = 0.f; }
+        if (driving) {
+            float mag = fabsf(err) / 0.21f; if (mag > 1.f) mag = 1.f; if (mag < 0.35f) mag = 0.35f;
+            // a stick push to the right turns the game's camera the "right" way round (driveSign flips it if the game is set to inverted)
+            g_snapStickOut = (err > 0.f ? 1.f : -1.f) * rightSign * (float)driveSign * mag;
+        } else g_snapStickOut = 0.f;
+    } else {
+        g_snapStickOut = 0.f;
+        resid *= expf(-dt / 0.15f); if (fabsf(resid) < 0.0005f) resid = 0.f;
+    }
+    g_snapOwnsStick = true;
+    g_snapDelta = resid; g_snapOn = resid != 0.f; memcpy(g_snapPivot, hp, 12);
+}
+// in -> out: the view turned by this frame's snap delta about the vertical axis through the pivot; false = nothing to do
+static bool SnapView(const float* in, float* out) {
+    if (!g_snapOn || g_snapDelta == 0.f) return false;
+    // the camera is moved by +delta about the pivot, so world points go through the opposite turn before the view
+    float c = cosf(-g_snapDelta), sn = sinf(-g_snapDelta), px = g_snapPivot[0], py = g_snapPivot[1];
+    float M[16] = { c, sn, 0, 0,  -sn, c, 0, 0,  0, 0, 1, 0,  px - (px * c - py * sn), py - (px * sn + py * c), 0, 1 };
+    Mul4(M, in, out);
+    return true;
+}
+static bool SnapViewFwd(const float* in, float* out) { return SnapView(in, out); }
 // the game's view matrix (world -> camera, row vectors) rebuilt for the head position; false = keep the game's
 static bool FpView(const float* src, float* out) {
     if (!g_fp || (g_menuMode && (g_menuLevel > 0 || g_frontEnd))) return false;
+    if (CutsceneNow()) { static bool was = false; if (!was) { was = true; Log("first person: a cutscene is playing - the game's own camera is used until it ends"); } return false; }   // 146
     float cp[3]; for (int k = 0; k < 3; k++) cp[k] = -(src[12] * src[k * 4 + 0] + src[13] * src[k * 4 + 1] + src[14] * src[k * 4 + 2]);   // game camera position
     if (fabsf(cp[0]) < 0.5f && fabsf(cp[1]) < 0.5f && fabsf(cp[2]) < 0.5f) return false;                                              // front-end screens
     float hp[3]; static LONG st = -1;
@@ -561,8 +653,11 @@ static void hkEyeFrameInner(float a, int eye) {
     const float* gP = sP;
     if (g_cullValid && !memcmp(V, g_cullV, 64)) { src = g_gameV; gP = g_gameP; }   // the camera holds the culling camera: use the real one
     static float fpV[2][16]; static bool fpOk = false;   // 124: first person - one head read per frame (first eye), the same camera for both eyes
-    if (eye == 0) fpOk = FpView(src, fpV[0]);
+    if (eye == 0) { SnapUpdate(src); fpOk = FpView(src, fpV[0]); }   // 146: snap turn state from the game's own camera, once per frame
     if (fpOk) src = fpV[0];
+    static float snapV[2][16]; static bool snapOk = false;   // 146: the same turned camera for both eyes
+    if (eye == 0) snapOk = SnapView(src, snapV[0]);
+    if (snapOk) src = snapV[0];
     float E[16], Ei[16], Ve[16], Pe[16];
     int pe = g_swapOrder ? 1 - eye : eye;   // which headset eye this pass renders
     EyeInCamera(views[pe], views[1 - pe], E); InvRigid(E, Ei);
@@ -702,6 +797,7 @@ static void hkViewRebuild(float a) {
     float E[16], E1[16], Ei[16]; EyeInCamera(g_lastViews[0], g_lastViews[1], E); EyeInCamera(g_lastViews[1], g_lastViews[0], E1);
     for (int k = 12; k < 15; k++) E[k] = 0.5f * (E[k] + E1[k]);
     float fpC[16]; const float* baseV = FpView(sV, fpC) ? fpC : sV;   // 124: first person - cull from the head too
+    float snC[16]; if (SnapView(baseV, snC)) baseV = snC;               // 146: and from the snapped direction (last frame's turn)
     InvRigid(E, Ei); float Vc[16]; Mul4(baseV, Ei, Vc);
     float l, r, u, d; UnionFov(g_lastViews, g_cullScale, l, r, u, d); float Pc[16]; ProjFromTan(l, r, u, d, sP, Pc);
     memcpy(V, Vc, 64); InvRigid(Vc, Vi); memcpy(P, Pc, 64);
@@ -829,6 +925,7 @@ typedef void (*NisSetPlayTime_t)(void*, float, bool);
 static NisSetPlayTime_t oNisSetPlayTime;
 static float g_nisDelta[180], g_nisDt[180]; static int g_nisN = -1;
 static volatile int g_nisSmooth = 1; static volatile LONG64 g_cutsceneQpc;
+static bool CutsceneNow() { LONG64 c = g_cutsceneQpc; if (!c) return false; LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f); return q.QuadPart - c < f.QuadPart / 4; }   // 146
 static void hkNisSetPlayTime(void* mgr, float t, bool sync) {
     static float prevT, applied; static void* prevMgr; static int prevState, caps; static bool valid; static float stillT;
     static LARGE_INTEGER pq, qf; LARGE_INTEGER q; QueryPerformanceCounter(&q); if (!qf.QuadPart) QueryPerformanceFrequency(&qf);
@@ -1111,7 +1208,7 @@ static void PadLoad() {
         g_padBtn[i] = m; }   // an unknown name or NONE = no button
 }
 static void MenuTick() {
-    enum { I_DLSS, I_QUAL, I_SHARP, I_BLOOM, I_HUD, I_HUDDIST, I_HUDSIZE, I_WORLD, I_FP, I_MIRROR, I_PAD, I_RECENTER, I_COUNT };
+    enum { I_DLSS, I_QUAL, I_SHARP, I_BLOOM, I_HUD, I_HUDDIST, I_HUDSIZE, I_WORLD, I_FP, I_SNAP, I_MIRROR, I_PAD, I_RECENTER, I_COUNT };
     enum { P_FP1, P_FP2, P_RC1, P_RC2, P_HOLD, P_BACK, P_COUNT };   // 141: page 2, gamepad shortcuts
     static int page = 0, psel = 0, capt = -1; static ULONGLONG captUntil = 0; static WORD captPrev = 0;
     static bool open = false, pIns = false, pUp = false, pDn = false, pInc = false, pDec = false; static int sel = 0; static ULONGLONG nextRep = 0, nextDraw = 0;
@@ -1184,6 +1281,7 @@ static void MenuTick() {
         case I_HUDSIZE: { float sc = XrHudScaleGet() + 0.05f * (float)d; if (sc < 0.5f) sc = 0.5f; if (sc > 3.f) sc = 3.f; XrHudScaleSet(sc); IniFloat(L"HudScale", sc); } break;   // 093: scale about the minimap
         case I_WORLD: { float w = 1.f / (g_worldScale > 0.01f ? g_worldScale : 1.f); w = floorf(w * 20.f + 0.5f) / 20.f + 0.05f * (float)d; if (w < 0.5f) w = 0.5f; if (w > 2.f) w = 2.f; g_worldScale = 1.f / w; wchar_t b[24]; swprintf(b, 24, L"%.4f", g_worldScale); WritePrivateProfileStringW(L"VR", L"WorldScale", b, g_ini); Log("menu: world scale %.2f (eye / movement factor %.3f)", w, g_worldScale); } break;   // 124: world size as seen: 1 / the eye-separation factor
         case I_FP: g_fp = !g_fp; IniInt(L"FirstPerson", g_fp); Log("menu: first person %d", (int)g_fp); break;
+        case I_SNAP: { static const int kS[4] = { 0, 15, 30, 45 }; int i = 0; for (int k = 0; k < 4; k++) if (kS[k] == g_snapDeg) i = k; i = (i + d + 4) % 4; g_snapDeg = kS[i]; IniInt(L"SnapTurn", g_snapDeg); Log("menu: snap turn %d", (int)g_snapDeg); } break;   // 146
         case I_MIRROR: g_mirror = (g_mirror + d + 3) % 3; IniInt(L"Mirror", g_mirror); break;
         case I_PAD: if (d > 0) { page = 1; psel = 0; capt = -1; pInc = true; nextDraw = 0; return; } break;
         case I_RECENTER: g_recenterReq = true; break;
@@ -1200,9 +1298,10 @@ static void MenuTick() {
     static const char* hs[3] = { "FIXED IN FRONT", "FOLLOWS HEAD", "OFF" }; snprintf(v[I_HUD], 48, "%s", hs[g_hudSt]);
     snprintf(v[I_HUDDIST], 48, "%.1f M", hd); snprintf(v[I_HUDSIZE], 48, "%.2f", XrHudScaleGet());
     snprintf(v[I_WORLD], 48, "%.2f", 1.f / (g_worldScale > 0.01f ? g_worldScale : 1.f)); snprintf(v[I_FP], 48, "%s", g_fp ? "ON (EXPERIMENTAL)" : "OFF");
+    if (g_snapDeg > 0) snprintf(v[I_SNAP], 48, "%d DEGREES", (int)g_snapDeg); else snprintf(v[I_SNAP], 48, "OFF");   // 146
     static const char* ms[3] = { "LEFT EYE", "RIGHT EYE", "ALTERNATING" }; snprintf(v[I_MIRROR], 48, "%s", ms[g_mirror % 3]);
     snprintf(v[I_RECENTER], 48, "PRESS RIGHT"); snprintf(v[I_PAD], 48, "PRESS RIGHT");
-    static const char* nm[I_COUNT] = { "DLSS", "DLSS MODE", "SHARPENING", "BLOOM", "HUD PANEL", "HUD DISTANCE", "HUD SCALE", "WORLD SCALE", "FIRST PERSON", "MONITOR WINDOW", "GAMEPAD SHORTCUTS", "RECENTER VIEW" };
+    static const char* nm[I_COUNT] = { "DLSS", "DLSS MODE", "SHARPENING", "BLOOM", "HUD PANEL", "HUD DISTANCE", "HUD SCALE", "WORLD SCALE", "FIRST PERSON", "SNAP TURN", "MONITOR WINDOW", "GAMEPAD SHORTCUTS", "RECENTER VIEW" };
     char t[1000]; int o = snprintf(t, sizeof t, "SLEEPING DOGS VR MENU\n \n");
     for (int i = 0; i < I_COUNT; i++) o += snprintf(t + o, sizeof t - o, "%s %-18s %s\n", i == sel ? ">" : " ", nm[i], v[i]);
     snprintf(t + o, sizeof t - o, " \nUP / DOWN: SELECT     LEFT / RIGHT: CHANGE\nINSERT: CLOSE");
@@ -1212,19 +1311,41 @@ static void MenuTick() {
 // Both need LB held, so neither can happen from a single button used in play (the right stick click is the car horn):
 //   LB held + Y pressed and held for PadHoldMs (700)  -> recentre the view
 //   LB held + B pressed and held for PadHoldMs        -> first person on / off
+struct XState { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; };
+typedef DWORD (WINAPI *XGet_t)(DWORD, XState*);
+static XGet_t oXInputGetState = nullptr;
+// 146: every XInputGetState call that is not the mod's own (= the game's). Records the player's right stick for snap
+// turning and, while snap turning owns the stick, gives the game the mod's sideways value instead.
+static DWORD WINAPI hkXInputGetState(DWORD idx, XState* st) {
+    DWORD r = oXInputGetState(idx, st);
+    if (idx < 4) {
+        if (r == 0 && st) {
+            InterlockedIncrement(&g_snapGameReads);
+            g_snapRawRx[idx] = (float)st->rx / 32767.f;
+            if (g_snapDeg > 0 && g_snapOwnsStick && st->lt <= 128) { float o = g_snapStickOut; if (o > 1.f) o = 1.f; if (o < -1.f) o = -1.f; st->rx = (SHORT)(o * 32767.f); }
+        } else g_snapRawRx[idx] = 0.f;
+    }
+    return r;
+}
 static void PadTick() {
-    struct XState { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; };
-    typedef DWORD (WINAPI *Get_t)(DWORD, XState*);
+    typedef XGet_t Get_t;
     static Get_t get = nullptr; static bool tried = false;
     if (!tried) { tried = true;
         static const wchar_t* kDll[3] = { L"xinput1_3.dll", L"xinput1_4.dll", L"xinput9_1_0.dll" };
         for (int i = 0; i < 3 && !get; i++) { HMODULE h = GetModuleHandleW(kDll[i]); if (h && (get = (Get_t)GetProcAddress(h, "XInputGetState"))) Log("gamepad shortcuts: using %ls", kDll[i]); }   // the one the game already has loaded
         for (int i = 0; i < 3 && !get; i++) { HMODULE h = LoadLibraryW(kDll[i]); if (h && (get = (Get_t)GetProcAddress(h, "XInputGetState"))) Log("gamepad shortcuts: loaded %ls", kDll[i]); }
         if (!get) Log("gamepad shortcuts: XInput not found - off");
+        if (get) {   // 146: the same function, hooked for snap turning; the mod itself keeps calling the original
+            MH_STATUS a = MH_CreateHook((void*)get, (void*)hkXInputGetState, (void**)&oXInputGetState), b = a == MH_OK ? MH_EnableHook((void*)get) : a;
+            if (a == MH_OK && b == MH_OK && oXInputGetState) { get = oXInputGetState; Log("snap turn: gamepad read hooked (SnapTurn=%d degrees; 0 = off)", (int)g_snapDeg); }
+            else { oXInputGetState = nullptr; Log("snap turn: gamepad read hook failed (%d %d) - snap turning is not available", (int)a, (int)b); }
+        }
     }
     if (!get) return;
     WORD b = 0; bool have = false;
-    for (DWORD i = 0; i < 4; i++) { XState st = {}; if (get(i, &st) == 0) { have = true; b |= (WORD)(st.buttons & 0xF3FF); if (st.lt > 128) b |= 0x0400; if (st.rt > 128) b |= 0x0800; } }
+    bool ltHeld = false;
+    for (DWORD i = 0; i < 4; i++) { XState st = {}; if (get(i, &st) == 0) { have = true; b |= (WORD)(st.buttons & 0xF3FF); if (st.lt > 128) { b |= 0x0400; ltHeld = true; } if (st.rt > 128) b |= 0x0800; } }
+    g_snapLt = ltHeld;   // 146: aiming keeps the smooth stick
     g_padNow = b; g_padHave = have;
     ULONGLONG now = GetTickCount64();
     const WORD fpM = (WORD)(g_padBtn[0] | g_padBtn[1]), rcM = (WORD)(g_padBtn[2] | g_padBtn[3]);
@@ -1334,6 +1455,7 @@ static void Init() {
     { wchar_t b[32]; GetPrivateProfileStringW(L"VR", L"WorldScale", L"1.0", b, 32, g_ini); g_worldScale = (float)_wtof(b); }
     if (!(g_worldScale >= 0.25f && g_worldScale <= 4.f)) g_worldScale = 1.f;
     g_fp = GetPrivateProfileIntW(L"VR", L"FirstPerson", 0, g_ini) != 0;
+    { int sn = GetPrivateProfileIntW(L"VR", L"SnapTurn", 0, g_ini); g_snapDeg = (sn == 15 || sn == 30 || sn == 45) ? sn : 0; }   // 146
     g_autoRecenter = GetPrivateProfileIntW(L"VR", L"AutoRecenter", 1, g_ini);
     g_padCombo = GetPrivateProfileIntW(L"VR", L"PadFirstPersonCombo", 1, g_ini); g_padRecenter = GetPrivateProfileIntW(L"VR", L"PadRecenterHold", 1, g_ini);
     g_padHoldMs = GetPrivateProfileIntW(L"VR", L"PadHoldMs", 700, g_ini); if (g_padHoldMs < 100) g_padHoldMs = 100; PadLoad();

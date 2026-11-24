@@ -1,6 +1,6 @@
 // payload_ids.h - resource ids of the files the launcher installs and its art
 #pragma once
-#define SDVR_VERSION "0.8.7"
+#define SDVR_VERSION "0.8.8"
 // For a diagnostic release, define SDVR_DIAGNOSTIC: the launcher then says so on every page (as 0.8.5 did).
 // #define SDVR_DIAGNOSTIC 1
 #define IDR_DINPUT8     101

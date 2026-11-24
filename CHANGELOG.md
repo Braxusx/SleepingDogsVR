@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.8
+
+- **Fix for double vision on Meta's own VR runtime (Meta Quest Link / the Oculus app).** The 3D world appeared doubled
+  while the menus looked right. The mod drew each eye with a wider view than the headset's own and told the runtime which
+  angles the picture covers; Virtual Desktop and SteamVR respect that, Meta's runtime does not. On Meta's runtime the mod
+  now hands over only the part of each picture that lies inside the headset's own view. Nothing visible is lost.
+  `SubmitFov` in `sdvr.ini` can force this on (1) or off (2) on any runtime; 0 is automatic.
+- **Snap turning.** Launcher: Settings > View > *Snap turning*, or the in-game VR menu (Insert) > *SNAP TURN*: off, 15, 30
+  or 45 degrees. A flick of the right stick turns the view by one step at once; holding it gives a further step every half
+  second. It works behind Wei and in first person. While the left trigger is held (aiming) the stick turns smoothly as
+  before. If the game's camera does not follow the stick (some minigames and scripted moments) the stick is handed back
+  to the game for a few seconds.
+- **First person: cutscenes keep the game's camera.** With first person switched on, the game's own camera is used for
+  as long as a cutscene plays, and first person comes back when it ends.
+- Mod build 146.
+
 ## 0.8.7
 
 Plays the same as 0.8.6. This release adds diagnostics for picture problems (double vision, the two eyes not matching,
